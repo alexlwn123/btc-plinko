@@ -32,27 +32,27 @@ This plan turns the current Plinko demo into an account-based casino game using 
 
 ## Phase 1: Scope And Data Model Outline
 
-- [ ] Keep the current Plinko board as the primary game experience.
-- [ ] Use Convex as the source of truth for users, wallet state, game rounds, payouts, and history.
-- [ ] Treat the frontend as display, input, and animation only.
-- [ ] Make all balance-changing actions go through Convex mutations.
-- [ ] Define the conceptual Convex data we need to track:
-  - [ ] Users and account state.
-  - [ ] Wallet balances and held funds.
-  - [ ] Wallet movements.
-  - [ ] Deposits and their statuses.
-  - [ ] Withdrawals and their statuses.
-  - [ ] Game rounds.
-  - [ ] Bets.
-  - [ ] Payouts.
-  - [ ] Provably fair seed, nonce, and proof data.
-  - [ ] Play history.
-  - [ ] Cashier transaction history.
-  - [ ] Account and session activity.
-  - [ ] Admin actions.
-  - [ ] Errors and settlement events.
-- [ ] Define the payment-provider boundary without implementing the real rails.
-- [ ] Decide the money unit the app stores internally so balances never depend on floating-point math.
+- [x] Keep the current Plinko board as the primary game experience.
+- [x] Use Convex as the source of truth for users, wallet state, game rounds, payouts, and history.
+- [x] Treat the frontend as display, input, and animation only.
+- [x] Make all balance-changing actions go through Convex mutations.
+- [x] Define the conceptual Convex data we need to track:
+  - [x] Users and account state.
+  - [x] Wallet balances and held funds.
+  - [x] Wallet movements.
+  - [x] Deposits and their statuses.
+  - [x] Withdrawals and their statuses.
+  - [x] Game rounds.
+  - [x] Bets.
+  - [x] Payouts.
+  - [x] Provably fair seed, nonce, and proof data.
+  - [x] Play history.
+  - [x] Cashier transaction history.
+  - [x] Account and session activity.
+  - [x] Admin actions.
+  - [x] Errors and settlement events.
+- [x] Define the payment-provider boundary without implementing the real rails.
+- [x] Decide the money unit the app stores internally so balances never depend on floating-point math.
 
 ## Phase 2: Convex And Account Foundation
 
