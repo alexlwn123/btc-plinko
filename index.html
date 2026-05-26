@@ -4,83 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Plinko</title>
-    <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
-    <main class="app-shell">
-      <section class="control-panel" aria-label="Game controls">
-        <div class="brand-row">
-          <div>
-            <p class="eyebrow">Arcade board</p>
-            <h1>Plinko</h1>
-          </div>
-          <div class="balance-box">
-            <span>Credits</span>
-            <strong id="balance">1,000.00</strong>
-          </div>
-        </div>
-
-        <div class="field">
-          <label for="bet">Bet</label>
-          <div class="bet-control">
-            <button class="icon-button" type="button" id="halfBet" aria-label="Halve bet">1/2</button>
-            <input id="bet" type="number" min="1" step="1" value="10" inputmode="decimal">
-            <button class="icon-button" type="button" id="doubleBet" aria-label="Double bet">2x</button>
-          </div>
-        </div>
-
-        <div class="field">
-          <div class="label-row">
-            <label for="rows">Rows</label>
-            <output id="rowValue" for="rows">12</output>
-          </div>
-          <input id="rows" type="range" min="8" max="16" step="2" value="12">
-        </div>
-
-        <div class="field">
-          <span class="control-label">Risk</span>
-          <div class="segmented" role="group" aria-label="Risk level">
-            <button type="button" data-risk="low">Low</button>
-            <button type="button" data-risk="medium" class="active">Medium</button>
-            <button type="button" data-risk="high">High</button>
-          </div>
-        </div>
-
-        <button id="dropButton" class="drop-button" type="button">Drop</button>
-
-        <div class="history-panel" aria-label="Play history">
-          <div class="label-row">
-            <span class="control-label">Play history</span>
-            <span id="historyCount">Last 12</span>
-          </div>
-          <ol id="playHistory" class="play-history" aria-live="polite"></ol>
-        </div>
-
-        <div class="fairness-panel">
-          <div class="label-row">
-            <span class="control-label">Provably fair</span>
-            <span id="fairNonce">Nonce -</span>
-          </div>
-          <div class="field">
-            <label for="clientSeed">Client seed</label>
-            <input id="clientSeed" type="text" value="browser-client" spellcheck="false" autocomplete="off">
-          </div>
-          <div class="seed-grid">
-            <span>Server hash</span>
-            <code id="serverHash">Preparing...</code>
-            <span>Revealed seed</span>
-            <code id="revealedSeed">Awaiting result</code>
-            <span>Proof</span>
-            <code id="proofResult">-</code>
-          </div>
-        </div>
-      </section>
-
-      <section class="board-panel" aria-label="Plinko board">
-        <canvas id="board" width="1200" height="1200" aria-label="Plinko game board"></canvas>
-      </section>
-    </main>
-
-    <script type="module" src="./app.mjs?v=provably-fair-1"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

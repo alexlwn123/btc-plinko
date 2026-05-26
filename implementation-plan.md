@@ -10,6 +10,26 @@ This plan turns the current Plinko demo into an account-based casino game using 
 - [ ] Treat browser validation as a functional smoke test: confirm the UI state, Convex-backed data, loading states, disabled states, and error paths match the behavior that was just implemented.
 - [ ] Keep each phase shippable enough that the current browser experience still works before moving to the next phase.
 
+## Phase 0: React, TypeScript, pnpm, And Convex Setup
+
+- [x] Initialize the repo as a pnpm-managed project.
+- [x] Add React and TypeScript.
+- [x] Add Vitest for unit and logic tests.
+- [x] Add Biome for formatting and linting.
+- [x] Add a modern build/dev setup for the frontend.
+- [x] Add Convex to the project.
+- [x] Create the initial Convex app structure.
+- [x] Create or link the real Convex project.
+- [x] Add development scripts for the frontend and Convex backend.
+- [x] Add TypeScript configuration for frontend and Convex code.
+- [x] Move the current Plinko UI into React components without changing gameplay behavior.
+- [x] Move reusable game logic into typed modules.
+- [x] Preserve the existing local-only game as the baseline before wallet/account work begins.
+- [x] Add initial Vitest coverage for migrated game logic.
+- [x] Add Biome check and format scripts.
+- [x] Add initial smoke checks for the migrated React app.
+- [x] Validate the migrated app in the browser before starting Phase 1.
+
 ## Phase 1: Scope And Data Model Outline
 
 - [ ] Keep the current Plinko board as the primary game experience.
