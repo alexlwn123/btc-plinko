@@ -81,6 +81,11 @@ button:disabled {
     linear-gradient(0deg, rgba(0, 228, 141, 0.1), transparent 36%), rgba(18, 21, 27, 0.96);
 }
 
+.play-panel {
+  background: linear-gradient(180deg, rgba(0, 228, 141, 0.08), transparent 28%),
+    rgba(18, 21, 27, 0.96);
+}
+
 .brand-row,
 .label-row {
   display: flex;
@@ -120,6 +125,35 @@ h1 {
 
 .auth-hero h1 {
   font-size: 5.5rem;
+}
+
+.play-hero {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.play-title {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.panel-link {
+  padding: 0;
+  color: var(--green);
+  background: transparent;
+  font-size: 0.74rem;
+  font-weight: 900;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.panel-link:disabled {
+  color: var(--muted);
 }
 
 .account-stack {
@@ -233,7 +267,8 @@ h1 {
   gap: 10px;
 }
 
-.auth-actions button {
+.auth-actions button,
+.cashier-strip {
   min-height: 52px;
   border-radius: 8px;
   font-weight: 900;
@@ -253,6 +288,12 @@ h1 {
 
 .auth-secondary:hover {
   background: #2a303a;
+}
+
+.auth-dev {
+  border: 1px dashed rgba(245, 188, 66, 0.46);
+  color: var(--amber);
+  background: rgba(245, 188, 66, 0.08);
 }
 
 .auth-ledger {
@@ -278,6 +319,77 @@ h1 {
   color: var(--green);
 }
 
+.play-ledger {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.play-ledger > div {
+  display: grid;
+  grid-template-columns: minmax(74px, auto) minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+
+.play-ledger span,
+.play-ledger small,
+.cashier-strip span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.play-ledger strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.92rem;
+  line-height: 1.12;
+  text-align: right;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.play-ledger strong.error {
+  color: var(--red);
+  text-transform: none;
+}
+
+.ledger-balance strong {
+  color: var(--green);
+  font-size: 2.35rem;
+  letter-spacing: 0;
+}
+
+.ledger-balance small {
+  grid-column: 2;
+  text-align: right;
+}
+
+.cashier-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  border: 1px solid var(--line);
+  padding: 0 14px;
+  color: var(--text);
+  background: #101319;
+}
+
+.cashier-strip strong {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
 .balance-box strong {
   max-width: 128px;
   overflow: hidden;
@@ -290,6 +402,11 @@ h1 {
 .field {
   display: grid;
   gap: 9px;
+}
+
+.game-control-group {
+  display: grid;
+  gap: 16px;
 }
 
 .bet-control {
@@ -617,6 +734,10 @@ input[type="range"] {
 
   .auth-panel {
     min-height: auto;
+  }
+
+  .play-hero {
+    align-items: stretch;
   }
 
   h1 {

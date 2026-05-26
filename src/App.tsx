@@ -30,6 +30,11 @@ const PLAY_HISTORY_LIMIT = 12;
 const ROW_MIN = 8;
 const ROW_MAX = 16;
 const ROW_STEP = 2;
+const DEV_PROFILE = {
+  accountState: "active",
+  authMethod: "passkey",
+  publicId: "dev-account",
+} as const;
 
 type ServerCommit = {
   serverSeed: string;
@@ -286,6 +291,7 @@ export function App() {
   const keyDropActiveRef = useRef(false);
   const lastDropActivationAtRef = useRef(0);
   const [sessionToken, setSessionToken] = useState(() => getSavedPasskeySession());
+  const [isDevSignedIn, setIsDevSignedIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState<"register" | "signin" | "signout" | null>(null);
   const [view, setView] = useState(() => snapshot(gameRef.current));
@@ -295,10 +301,12 @@ export function App() {
   const verifyPasskeyAuthentication = useMutation(api.users.verifyPasskeyAuthentication);
   const signOutPasskey = useMutation(api.users.signOutPasskey);
   const profile = useQuery(api.users.getSessionUser, sessionToken ? { sessionToken } : "skip");
-  const accountLabel = profile?.publicId ?? "Passkey";
+  const accountProfile = isDevSignedIn ? DEV_PROFILE : profile;
+  const accountLabel = accountProfile?.publicId ?? "Passkey";
   const profileStatus =
-    authError ?? profile?.accountState ?? (sessionToken ? "syncing" : "not linked");
-  const isSignedIn = Boolean(sessionToken && profile);
+    authError ?? accountProfile?.accountState ?? (sessionToken ? "syncing" : "not linked");
+  const isSignedIn = isDevSignedIn || Boolean(sessionToken && profile);
+  const canUseDevSignIn = import.meta.env.DEV && !isSignedIn;
   const authBusyLabel =
     authBusy === "register"
       ? "Creating"
@@ -854,6 +862,7 @@ export function App() {
 
     setAuthBusy("signout");
     setAuthError(null);
+    setIsDevSignedIn(false);
     clearPasskeySession();
     setSessionToken(null);
 
@@ -866,6 +875,11 @@ export function App() {
     } finally {
       setAuthBusy(null);
     }
+  }
+
+  function handleDevSignIn() {
+    setAuthError(null);
+    setIsDevSignedIn(true);
   }
 
   useEffect(() => {
@@ -929,126 +943,134 @@ export function App() {
   return (
     <main className={`app-shell ${isSignedIn ? "is-playing" : "is-logged-out"}`}>
       <section
-        className={`control-panel ${isSignedIn ? "" : "auth-panel"}`}
+        className={`control-panel ${isSignedIn ? "play-panel" : "auth-panel"}`}
         aria-label={isSignedIn ? "Game controls" : "Account access"}
       >
         {isSignedIn ? (
           <>
-            <div className="brand-row">
-              <div>
-                <p className="eyebrow">Arcade board</p>
+            <div className="play-hero">
+              <div className="play-title">
+                <p className="eyebrow">Account active</p>
                 <h1>Plinko</h1>
               </div>
-              <div className="account-stack">
-                <div className="account-box">
-                  <span>Anonymous</span>
-                  <strong>{accountLabel}</strong>
-                  <small className={authError ? "error" : ""}>{profileStatus}</small>
-                  <div className="account-actions">
-                    <button type="button" disabled>
-                      Cashier
-                    </button>
-                    <button
-                      type="button"
-                      disabled={authBusy !== null}
-                      onClick={handlePasskeySignOut}
-                    >
-                      Sign out
-                    </button>
-                  </div>
-                </div>
-                <div className="balance-box">
-                  <span>Sats</span>
-                  <strong id="balance">{formatNumber(view.balance, 0)}</strong>
-                </div>
+              <button
+                className="panel-link"
+                type="button"
+                disabled={authBusy !== null}
+                onClick={handlePasskeySignOut}
+              >
+                Sign out
+              </button>
+            </div>
+
+            <div className="play-ledger" aria-label="Account summary">
+              <div className="ledger-balance">
+                <span>Balance</span>
+                <strong id="balance">{formatNumber(view.balance, 0)}</strong>
+                <small>Sats</small>
+              </div>
+              <div>
+                <span>Account</span>
+                <strong>{accountLabel}</strong>
+              </div>
+              <div>
+                <span>Status</span>
+                <strong className={authError ? "error" : ""}>{profileStatus}</strong>
               </div>
             </div>
 
-            <div className="field">
-              <label htmlFor="bet">Bet</label>
-              <div className="bet-control">
-                <button
-                  className="icon-button"
-                  type="button"
-                  id="halfBet"
-                  aria-label="Halve bet"
-                  onClick={() => setBet(currentBet() / 2)}
-                >
-                  1/2
-                </button>
-                <input
-                  id="bet"
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={view.betInput}
-                  inputMode="decimal"
-                  onChange={(event) => {
-                    gameRef.current.betInput = event.target.value;
-                    publish();
-                  }}
-                  onBlur={() => setBet(currentBet())}
-                />
-                <button
-                  className="icon-button"
-                  type="button"
-                  id="doubleBet"
-                  aria-label="Double bet"
-                  onClick={() => setBet(currentBet() * 2)}
-                >
-                  2x
-                </button>
-              </div>
-            </div>
-
-            <div className="field">
-              <div className="label-row">
-                <label htmlFor="rows">Rows</label>
-                <output id="rowValue" htmlFor="rows">
-                  {view.rows}
-                </output>
-              </div>
-              <input
-                id="rows"
-                type="range"
-                min={ROW_MIN}
-                max={ROW_MAX}
-                step={ROW_STEP}
-                value={view.rows}
-                disabled={view.isSettingsLocked}
-                onChange={(event) => handleRowsChange(event.target.value)}
-              />
-            </div>
-
-            <div className="field">
-              <span className="control-label">Risk</span>
-              <fieldset className="segmented" aria-label="Risk level">
-                {(Object.keys(RISKS) as Risk[]).map((risk) => (
-                  <button
-                    key={risk}
-                    type="button"
-                    data-risk={risk}
-                    className={risk === view.risk ? "active" : ""}
-                    disabled={view.isSettingsLocked}
-                    onClick={() => handleRiskChange(risk)}
-                  >
-                    {RISKS[risk].label}
-                  </button>
-                ))}
-              </fieldset>
-            </div>
-
-            <button
-              id="dropButton"
-              className="drop-button"
-              type="button"
-              disabled={view.isDropDisabled}
-              onPointerDown={handleDropPointerDown}
-              onKeyDown={handleDropKeyDown}
-              onKeyUp={handleDropKeyUp}
-            >
-              Drop
+            <button className="cashier-strip" type="button" disabled>
+              <span>Cashier</span>
+              <strong>Locked</strong>
             </button>
+
+            <div className="game-control-group">
+              <div className="field">
+                <label htmlFor="bet">Bet</label>
+                <div className="bet-control">
+                  <button
+                    className="icon-button"
+                    type="button"
+                    id="halfBet"
+                    aria-label="Halve bet"
+                    onClick={() => setBet(currentBet() / 2)}
+                  >
+                    1/2
+                  </button>
+                  <input
+                    id="bet"
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={view.betInput}
+                    inputMode="decimal"
+                    onChange={(event) => {
+                      gameRef.current.betInput = event.target.value;
+                      publish();
+                    }}
+                    onBlur={() => setBet(currentBet())}
+                  />
+                  <button
+                    className="icon-button"
+                    type="button"
+                    id="doubleBet"
+                    aria-label="Double bet"
+                    onClick={() => setBet(currentBet() * 2)}
+                  >
+                    2x
+                  </button>
+                </div>
+              </div>
+
+              <div className="field">
+                <div className="label-row">
+                  <label htmlFor="rows">Rows</label>
+                  <output id="rowValue" htmlFor="rows">
+                    {view.rows}
+                  </output>
+                </div>
+                <input
+                  id="rows"
+                  type="range"
+                  min={ROW_MIN}
+                  max={ROW_MAX}
+                  step={ROW_STEP}
+                  value={view.rows}
+                  disabled={view.isSettingsLocked}
+                  onChange={(event) => handleRowsChange(event.target.value)}
+                />
+              </div>
+
+              <div className="field">
+                <span className="control-label">Risk</span>
+                <fieldset className="segmented" aria-label="Risk level">
+                  {(Object.keys(RISKS) as Risk[]).map((risk) => (
+                    <button
+                      key={risk}
+                      type="button"
+                      data-risk={risk}
+                      className={risk === view.risk ? "active" : ""}
+                      disabled={view.isSettingsLocked}
+                      onClick={() => handleRiskChange(risk)}
+                    >
+                      {RISKS[risk].label}
+                    </button>
+                  ))}
+                </fieldset>
+              </div>
+
+              <button
+                id="dropButton"
+                className="drop-button"
+                type="button"
+                disabled={view.isDropDisabled}
+                onPointerDown={handleDropPointerDown}
+                onKeyDown={handleDropKeyDown}
+                onKeyUp={handleDropKeyUp}
+              >
+                Drop
+              </button>
+            </div>
 
             <div className="history-panel" aria-label="Play history">
               <div className="label-row">
@@ -1108,7 +1130,7 @@ export function App() {
         ) : (
           <>
             <div className="auth-hero">
-              <p className="eyebrow">Wallet access</p>
+              <p className="eyebrow">Account access</p>
               <h1>Plinko</h1>
             </div>
 
@@ -1125,7 +1147,7 @@ export function App() {
                 disabled={authBusy !== null}
                 onClick={handleCreatePasskey}
               >
-                Create wallet
+                Create account
               </button>
               <button
                 className="auth-secondary"
@@ -1135,6 +1157,11 @@ export function App() {
               >
                 Sign in
               </button>
+              {canUseDevSignIn ? (
+                <button className="auth-dev" type="button" onClick={handleDevSignIn}>
+                  Enter dev mode
+                </button>
+              ) : null}
             </div>
 
             <div className="auth-ledger" aria-label="Account status">
@@ -1162,7 +1189,7 @@ export function App() {
         />
         {!isSignedIn ? (
           <div className="board-lock" aria-hidden="true">
-            <span>Passkey wallet</span>
+            <span>Passkey account</span>
             <strong>Sign in to play</strong>
           </div>
         ) : null}
