@@ -15,6 +15,8 @@
     "convex:dev": "convex dev"
   },
   "dependencies": {
+    "@simplewebauthn/browser": "^13.3.0",
+    "@simplewebauthn/server": "^13.3.0",
     "convex": "^1.24.8",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"

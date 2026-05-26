@@ -56,13 +56,16 @@ This plan turns the current Plinko demo into an account-based casino game using 
 
 ## Phase 2: Convex And Account Foundation
 
-- [ ] Add Convex to the project.
-- [ ] Add account-based play instead of anonymous local-only state.
-- [ ] Add sign-in and sign-out.
-- [ ] Store user profile state in Convex.
-- [ ] Track account state such as active, locked, pending review, or disabled.
-- [ ] Add a global app shell that can show user identity, wallet balance, and cashier access.
-- [ ] Associate wallet events, bets, game rounds, deposits, and withdrawals with a user.
+- [x] Add Convex to the project.
+- [x] Add account-based play instead of local-only state.
+- [x] Add anonymous passkey account creation.
+- [x] Add passkey sign-in and sign-out.
+- [x] Store user profile state in Convex.
+- [x] Store passkey credential metadata in Convex.
+- [x] Store passkey challenge and session state in Convex.
+- [x] Track account state such as active, locked, pending review, or disabled.
+- [x] Add a global app shell that can show user identity, wallet balance, and cashier access.
+- [x] Associate wallet events, bets, game rounds, deposits, and withdrawals with a user.
 
 ## Phase 3: Convex Wallet System
 

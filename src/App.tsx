@@ -1,4 +1,11 @@
+import {
+  browserSupportsWebAuthn,
+  startAuthentication,
+  startRegistration,
+} from "@simplewebauthn/browser";
+import { useMutation, useQuery } from "convex/react";
 import { useEffect, useRef, useState } from "react";
+import { api } from "../convex/_generated/api";
 import {
   type Drop,
   type DropPoint,
@@ -12,6 +19,7 @@ import {
   randomServerSeed,
   verifyProvablyFairDrop,
 } from "./core";
+import { clearPasskeySession, getSavedPasskeySession, savePasskeySession } from "./passkeySession";
 
 const COMMIT_QUEUE_TARGET = 64;
 const COMMIT_BATCH_SIZE = 16;
@@ -277,7 +285,29 @@ export function App() {
   const pointerDropActiveRef = useRef(false);
   const keyDropActiveRef = useRef(false);
   const lastDropActivationAtRef = useRef(0);
+  const [sessionToken, setSessionToken] = useState(() => getSavedPasskeySession());
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authBusy, setAuthBusy] = useState<"register" | "signin" | "signout" | null>(null);
   const [view, setView] = useState(() => snapshot(gameRef.current));
+  const beginPasskeyRegistration = useMutation(api.users.beginPasskeyRegistration);
+  const verifyPasskeyRegistration = useMutation(api.users.verifyPasskeyRegistration);
+  const beginPasskeyAuthentication = useMutation(api.users.beginPasskeyAuthentication);
+  const verifyPasskeyAuthentication = useMutation(api.users.verifyPasskeyAuthentication);
+  const signOutPasskey = useMutation(api.users.signOutPasskey);
+  const profile = useQuery(api.users.getSessionUser, sessionToken ? { sessionToken } : "skip");
+  const accountLabel = profile?.publicId ?? "Passkey";
+  const profileStatus =
+    authError ?? profile?.accountState ?? (sessionToken ? "syncing" : "not linked");
+  const isSignedIn = Boolean(sessionToken && profile);
+  const authBusyLabel =
+    authBusy === "register"
+      ? "Creating"
+      : authBusy === "signin"
+        ? "Signing in"
+        : authBusy === "signout"
+          ? "Signing out"
+          : null;
+  const authPanelStatus = authBusyLabel ?? profileStatus;
 
   function publish() {
     setView(snapshot(gameRef.current));
@@ -290,11 +320,11 @@ export function App() {
 
   function currentBet() {
     const value = Number(gameRef.current.betInput);
-    return Number.isFinite(value) ? clamp(Math.round(value * 100) / 100, 1, 999999) : 1;
+    return Number.isFinite(value) ? clamp(Math.round(value), 1, 999999) : 1;
   }
 
   function setBet(value: number) {
-    gameRef.current.betInput = String(clamp(Math.round(value * 100) / 100, 1, 999999));
+    gameRef.current.betInput = String(clamp(Math.round(value), 1, 999999));
     publish();
   }
 
@@ -630,7 +660,7 @@ export function App() {
     state.activeBalls = state.activeBalls.filter((ball) => !finishedIds.has(ball.id));
 
     for (const ball of finishedBalls) {
-      const win = ball.bet * ball.multiplier;
+      const win = Math.floor(ball.bet * ball.multiplier);
 
       state.balance += win;
       recordPayout(ball, win);
@@ -761,6 +791,90 @@ export function App() {
     }
   }
 
+  function getCurrentPasskeyContext() {
+    if (!browserSupportsWebAuthn()) {
+      throw new Error("This browser does not support passkeys.");
+    }
+
+    if (window.location.protocol === "http:" && window.location.hostname !== "localhost") {
+      const localUrl = `http://localhost${window.location.port ? `:${window.location.port}` : ""}`;
+      throw new Error(`Open ${localUrl} to use passkeys in local development.`);
+    }
+
+    return {
+      origin: window.location.origin,
+      rpId: window.location.hostname,
+    };
+  }
+
+  async function handleCreatePasskey() {
+    setAuthBusy("register");
+    setAuthError(null);
+
+    try {
+      const options = await beginPasskeyRegistration(getCurrentPasskeyContext());
+      const response = await startRegistration({ optionsJSON: options });
+      const result = await verifyPasskeyRegistration({
+        challenge: options.challenge,
+        response,
+      });
+
+      savePasskeySession(result.sessionToken);
+      setSessionToken(result.sessionToken);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Passkey setup failed.");
+    } finally {
+      setAuthBusy(null);
+    }
+  }
+
+  async function handleSignInPasskey() {
+    setAuthBusy("signin");
+    setAuthError(null);
+
+    try {
+      const options = await beginPasskeyAuthentication(getCurrentPasskeyContext());
+      const response = await startAuthentication({ optionsJSON: options });
+      const result = await verifyPasskeyAuthentication({
+        challenge: options.challenge,
+        response,
+      });
+
+      savePasskeySession(result.sessionToken);
+      setSessionToken(result.sessionToken);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Passkey sign-in failed.");
+    } finally {
+      setAuthBusy(null);
+    }
+  }
+
+  async function handlePasskeySignOut() {
+    const token = sessionToken;
+
+    setAuthBusy("signout");
+    setAuthError(null);
+    clearPasskeySession();
+    setSessionToken(null);
+
+    try {
+      if (token) {
+        await signOutPasskey({ sessionToken: token });
+      }
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Passkey sign-out failed.");
+    } finally {
+      setAuthBusy(null);
+    }
+  }
+
+  useEffect(() => {
+    if (sessionToken && profile === null) {
+      clearPasskeySession();
+      setSessionToken(null);
+    }
+  }, [profile, sessionToken]);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: this mounts canvas observers and commit prefill once.
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -813,162 +927,232 @@ export function App() {
   });
 
   return (
-    <main className="app-shell">
-      <section className="control-panel" aria-label="Game controls">
-        <div className="brand-row">
-          <div>
-            <p className="eyebrow">Arcade board</p>
-            <h1>Plinko</h1>
-          </div>
-          <div className="balance-box">
-            <span>Credits</span>
-            <strong id="balance">{formatNumber(view.balance)}</strong>
-          </div>
-        </div>
+    <main className={`app-shell ${isSignedIn ? "is-playing" : "is-logged-out"}`}>
+      <section
+        className={`control-panel ${isSignedIn ? "" : "auth-panel"}`}
+        aria-label={isSignedIn ? "Game controls" : "Account access"}
+      >
+        {isSignedIn ? (
+          <>
+            <div className="brand-row">
+              <div>
+                <p className="eyebrow">Arcade board</p>
+                <h1>Plinko</h1>
+              </div>
+              <div className="account-stack">
+                <div className="account-box">
+                  <span>Anonymous</span>
+                  <strong>{accountLabel}</strong>
+                  <small className={authError ? "error" : ""}>{profileStatus}</small>
+                  <div className="account-actions">
+                    <button type="button" disabled>
+                      Cashier
+                    </button>
+                    <button
+                      type="button"
+                      disabled={authBusy !== null}
+                      onClick={handlePasskeySignOut}
+                    >
+                      Sign out
+                    </button>
+                  </div>
+                </div>
+                <div className="balance-box">
+                  <span>Sats</span>
+                  <strong id="balance">{formatNumber(view.balance, 0)}</strong>
+                </div>
+              </div>
+            </div>
 
-        <div className="field">
-          <label htmlFor="bet">Bet</label>
-          <div className="bet-control">
-            <button
-              className="icon-button"
-              type="button"
-              id="halfBet"
-              aria-label="Halve bet"
-              onClick={() => setBet(currentBet() / 2)}
-            >
-              1/2
-            </button>
-            <input
-              id="bet"
-              type="number"
-              min="1"
-              step="1"
-              value={view.betInput}
-              inputMode="decimal"
-              onChange={(event) => {
-                gameRef.current.betInput = event.target.value;
-                publish();
-              }}
-              onBlur={() => setBet(currentBet())}
-            />
-            <button
-              className="icon-button"
-              type="button"
-              id="doubleBet"
-              aria-label="Double bet"
-              onClick={() => setBet(currentBet() * 2)}
-            >
-              2x
-            </button>
-          </div>
-        </div>
+            <div className="field">
+              <label htmlFor="bet">Bet</label>
+              <div className="bet-control">
+                <button
+                  className="icon-button"
+                  type="button"
+                  id="halfBet"
+                  aria-label="Halve bet"
+                  onClick={() => setBet(currentBet() / 2)}
+                >
+                  1/2
+                </button>
+                <input
+                  id="bet"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={view.betInput}
+                  inputMode="decimal"
+                  onChange={(event) => {
+                    gameRef.current.betInput = event.target.value;
+                    publish();
+                  }}
+                  onBlur={() => setBet(currentBet())}
+                />
+                <button
+                  className="icon-button"
+                  type="button"
+                  id="doubleBet"
+                  aria-label="Double bet"
+                  onClick={() => setBet(currentBet() * 2)}
+                >
+                  2x
+                </button>
+              </div>
+            </div>
 
-        <div className="field">
-          <div className="label-row">
-            <label htmlFor="rows">Rows</label>
-            <output id="rowValue" htmlFor="rows">
-              {view.rows}
-            </output>
-          </div>
-          <input
-            id="rows"
-            type="range"
-            min={ROW_MIN}
-            max={ROW_MAX}
-            step={ROW_STEP}
-            value={view.rows}
-            disabled={view.isSettingsLocked}
-            onChange={(event) => handleRowsChange(event.target.value)}
-          />
-        </div>
-
-        <div className="field">
-          <span className="control-label">Risk</span>
-          <fieldset className="segmented" aria-label="Risk level">
-            {(Object.keys(RISKS) as Risk[]).map((risk) => (
-              <button
-                key={risk}
-                type="button"
-                data-risk={risk}
-                className={risk === view.risk ? "active" : ""}
+            <div className="field">
+              <div className="label-row">
+                <label htmlFor="rows">Rows</label>
+                <output id="rowValue" htmlFor="rows">
+                  {view.rows}
+                </output>
+              </div>
+              <input
+                id="rows"
+                type="range"
+                min={ROW_MIN}
+                max={ROW_MAX}
+                step={ROW_STEP}
+                value={view.rows}
                 disabled={view.isSettingsLocked}
-                onClick={() => handleRiskChange(risk)}
-              >
-                {RISKS[risk].label}
-              </button>
-            ))}
-          </fieldset>
-        </div>
+                onChange={(event) => handleRowsChange(event.target.value)}
+              />
+            </div>
 
-        <button
-          id="dropButton"
-          className="drop-button"
-          type="button"
-          disabled={view.isDropDisabled}
-          onPointerDown={handleDropPointerDown}
-          onKeyDown={handleDropKeyDown}
-          onKeyUp={handleDropKeyUp}
-        >
-          Drop
-        </button>
-
-        <div className="history-panel" aria-label="Play history">
-          <div className="label-row">
-            <span className="control-label">Play history</span>
-            <span id="historyCount">Last {PLAY_HISTORY_LIMIT}</span>
-          </div>
-          <ol id="playHistory" className="play-history" aria-live="polite">
-            {view.playHistory.length === 0 ? (
-              <li className="history-empty">No payouts yet</li>
-            ) : (
-              view.playHistory.map((entry) => {
-                const multiplier = `${entry.multiplier.toFixed(2)}x`;
-                return (
-                  <li
-                    key={entry.id}
-                    className={`history-item ${payoutTone(entry)}`}
-                    aria-label={`Payout ${formatNumber(entry.payout)} credits at ${multiplier}`}
+            <div className="field">
+              <span className="control-label">Risk</span>
+              <fieldset className="segmented" aria-label="Risk level">
+                {(Object.keys(RISKS) as Risk[]).map((risk) => (
+                  <button
+                    key={risk}
+                    type="button"
+                    data-risk={risk}
+                    className={risk === view.risk ? "active" : ""}
+                    disabled={view.isSettingsLocked}
+                    onClick={() => handleRiskChange(risk)}
                   >
-                    <strong>{formatNumber(entry.payout)}</strong>
-                    <span>{multiplier}</span>
-                  </li>
-                );
-              })
-            )}
-          </ol>
-        </div>
+                    {RISKS[risk].label}
+                  </button>
+                ))}
+              </fieldset>
+            </div>
 
-        <div className="fairness-panel">
-          <div className="label-row">
-            <span className="control-label">Provably fair</span>
-            <span id="fairNonce">{view.fairNonce}</span>
-          </div>
-          <div className="field">
-            <label htmlFor="clientSeed">Client seed</label>
-            <input
-              id="clientSeed"
-              type="text"
-              value={view.clientSeed}
-              spellCheck={false}
-              autoComplete="off"
-              onChange={(event) => {
-                gameRef.current.fairness.clientSeed = event.target.value;
-                publish();
-              }}
-            />
-          </div>
-          <div className="seed-grid">
-            <span>Server hash</span>
-            <code id="serverHash">{view.serverHash}</code>
-            <span>Revealed seed</span>
-            <code id="revealedSeed">{view.revealedSeed}</code>
-            <span>Proof</span>
-            <code id="proofResult">{view.proofResult}</code>
-          </div>
-        </div>
+            <button
+              id="dropButton"
+              className="drop-button"
+              type="button"
+              disabled={view.isDropDisabled}
+              onPointerDown={handleDropPointerDown}
+              onKeyDown={handleDropKeyDown}
+              onKeyUp={handleDropKeyUp}
+            >
+              Drop
+            </button>
+
+            <div className="history-panel" aria-label="Play history">
+              <div className="label-row">
+                <span className="control-label">Play history</span>
+                <span id="historyCount">Last {PLAY_HISTORY_LIMIT}</span>
+              </div>
+              <ol id="playHistory" className="play-history" aria-live="polite">
+                {view.playHistory.length === 0 ? (
+                  <li className="history-empty">No payouts yet</li>
+                ) : (
+                  view.playHistory.map((entry) => {
+                    const multiplier = `${entry.multiplier.toFixed(2)}x`;
+                    return (
+                      <li
+                        key={entry.id}
+                        className={`history-item ${payoutTone(entry)}`}
+                        aria-label={`Payout ${formatNumber(entry.payout, 0)} sats at ${multiplier}`}
+                      >
+                        <strong>{formatNumber(entry.payout, 0)}</strong>
+                        <span>{multiplier}</span>
+                      </li>
+                    );
+                  })
+                )}
+              </ol>
+            </div>
+
+            <div className="fairness-panel">
+              <div className="label-row">
+                <span className="control-label">Provably fair</span>
+                <span id="fairNonce">{view.fairNonce}</span>
+              </div>
+              <div className="field">
+                <label htmlFor="clientSeed">Client seed</label>
+                <input
+                  id="clientSeed"
+                  type="text"
+                  value={view.clientSeed}
+                  spellCheck={false}
+                  autoComplete="off"
+                  onChange={(event) => {
+                    gameRef.current.fairness.clientSeed = event.target.value;
+                    publish();
+                  }}
+                />
+              </div>
+              <div className="seed-grid">
+                <span>Server hash</span>
+                <code id="serverHash">{view.serverHash}</code>
+                <span>Revealed seed</span>
+                <code id="revealedSeed">{view.revealedSeed}</code>
+                <span>Proof</span>
+                <code id="proofResult">{view.proofResult}</code>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="auth-hero">
+              <p className="eyebrow">Wallet access</p>
+              <h1>Plinko</h1>
+            </div>
+
+            <div className="auth-status" aria-live="polite">
+              <span>Anonymous</span>
+              <strong>{accountLabel}</strong>
+              <small className={authError ? "error" : ""}>{authPanelStatus}</small>
+            </div>
+
+            <div className="auth-actions">
+              <button
+                className="auth-primary"
+                type="button"
+                disabled={authBusy !== null}
+                onClick={handleCreatePasskey}
+              >
+                Create wallet
+              </button>
+              <button
+                className="auth-secondary"
+                type="button"
+                disabled={authBusy !== null}
+                onClick={handleSignInPasskey}
+              >
+                Sign in
+              </button>
+            </div>
+
+            <div className="auth-ledger" aria-label="Account status">
+              <span>Status</span>
+              <strong>{authPanelStatus}</strong>
+              <span>Unit</span>
+              <strong>Sats</strong>
+              <span>Cashier</span>
+              <strong>Locked</strong>
+            </div>
+          </>
+        )}
       </section>
 
-      <section className="board-panel" aria-label="Plinko board">
+      <section
+        className={`board-panel ${isSignedIn ? "" : "board-preview"}`}
+        aria-label="Plinko board"
+      >
         <canvas
           ref={canvasRef}
           id="board"
@@ -976,6 +1160,12 @@ export function App() {
           height="1200"
           aria-label="Plinko game board"
         />
+        {!isSignedIn ? (
+          <div className="board-lock" aria-hidden="true">
+            <span>Passkey wallet</span>
+            <strong>Sign in to play</strong>
+          </div>
+        ) : null}
       </section>
     </main>
   );

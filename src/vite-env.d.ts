@@ -7,6 +7,14 @@ import type {
   verifyProvablyFairDrop,
 } from "./core";
 
+interface ImportMetaEnv {
+  readonly VITE_CONVEX_URL: string;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}
+
 declare global {
   interface Window {
     plinkoDebug: {
