@@ -1,3 +1,4 @@
+import { Analytics } from "@vercel/analytics/react";
 import { ConvexProvider, ConvexReactClient } from "convex/react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
@@ -19,5 +20,6 @@ const convex = new ConvexReactClient(convexUrl);
 createRoot(root).render(
   <ConvexProvider client={convex}>
     <App />
+    <Analytics />
   </ConvexProvider>,
 );
