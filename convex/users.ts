@@ -10,6 +10,7 @@ import {
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, type QueryCtx, mutation, query } from "./_generated/server";
+import { INITIAL_PLAYABLE_BALANCE_SATS, idempotencyKeyFor } from "./walletCore";
 
 const RP_NAME = "BTC Plinko";
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
@@ -99,7 +100,7 @@ async function createSession(ctx: MutationCtx, userId: Id<"users">, now: number)
   return sessionToken;
 }
 
-async function findSession(ctx: QueryCtx | MutationCtx, sessionToken: string) {
+export async function findSession(ctx: QueryCtx | MutationCtx, sessionToken: string) {
   if (!SESSION_TOKEN_PATTERN.test(sessionToken)) {
     return null;
   }
@@ -109,6 +110,26 @@ async function findSession(ctx: QueryCtx | MutationCtx, sessionToken: string) {
     .query("passkeySessions")
     .withIndex("by_token_hash", (q) => q.eq("tokenHash", tokenHash))
     .unique();
+}
+
+export async function requireActiveUserBySession(
+  ctx: QueryCtx | MutationCtx,
+  sessionToken: string,
+) {
+  const session = await findSession(ctx, sessionToken);
+  const now = Date.now();
+
+  if (!session || session.revokedAt || session.expiresAt < now) {
+    throw new Error("Session is not active.");
+  }
+
+  const user = await ctx.db.get(session.userId);
+
+  if (!user || user.accountState !== "active") {
+    throw new Error("Account is not active.");
+  }
+
+  return user;
 }
 
 function serializeUser(user: Doc<"users">) {
@@ -214,6 +235,30 @@ export const verifyPasskeyRegistration = mutation({
       createdAt: now,
       lastSeenAt: now,
       publicId: `anon-${randomBase64Url(5)}`,
+    });
+    const walletId = await ctx.db.insert("wallets", {
+      availableBalance: INITIAL_PLAYABLE_BALANCE_SATS,
+      createdAt: now,
+      heldBalance: 0,
+      unit: "sats",
+      updatedAt: now,
+      userId,
+    });
+
+    await ctx.db.insert("walletEvents", {
+      amount: INITIAL_PLAYABLE_BALANCE_SATS,
+      availableBalanceAfter: INITIAL_PLAYABLE_BALANCE_SATS,
+      availableDelta: INITIAL_PLAYABLE_BALANCE_SATS,
+      createdAt: now,
+      heldBalanceAfter: 0,
+      heldDelta: 0,
+      idempotencyKey: idempotencyKeyFor("system", userId, "manual_adjustment"),
+      kind: "manual_adjustment",
+      sourceId: userId,
+      sourceType: "system",
+      status: "completed",
+      userId,
+      walletId,
     });
 
     await ctx.db.insert("passkeyCredentials", {

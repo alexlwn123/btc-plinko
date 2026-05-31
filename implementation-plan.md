@@ -69,15 +69,15 @@ This plan turns the current Plinko demo into an account-based casino game using 
 
 ## Phase 3: Convex Wallet System
 
-- [ ] Move playable balance from local browser state into Convex.
-- [ ] Track available balance separately from money that is temporarily held.
-- [ ] Track wallet-changing events such as deposits, bets, payouts, withdrawals, refunds, and manual adjustments.
-- [ ] Ensure the client never directly edits a balance.
-- [ ] Make wallet mutations atomic so one action cannot partially apply.
-- [ ] Add idempotency for actions that may be retried, especially deposits, withdrawals, and bet settlement.
-- [ ] Prevent duplicate deposit crediting.
-- [ ] Prevent duplicate bet settlement.
-- [ ] Prevent withdrawals from spending more than the user's available balance.
+- [x] Move playable balance from local browser state into Convex.
+- [x] Track available balance separately from money that is temporarily held.
+- [x] Track wallet-changing events such as deposits, bets, payouts, withdrawals, refunds, and manual adjustments.
+- [x] Ensure the client never directly edits a balance.
+- [x] Make wallet mutations atomic so one action cannot partially apply.
+- [x] Add idempotency for actions that may be retried, especially deposits, withdrawals, and bet settlement.
+- [x] Prevent duplicate deposit crediting.
+- [x] Prevent duplicate bet settlement.
+- [x] Prevent withdrawals from spending more than the user's available balance.
 
 ## Phase 4: Cashier UI And Fake Funding Flows
 

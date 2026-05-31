@@ -9,6 +9,8 @@
  */
 
 import type * as users from "../users.js";
+import type * as walletCore from "../walletCore.js";
+import type * as wallets from "../wallets.js";
 
 import type {
   ApiFromModules,
@@ -18,6 +20,8 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   users: typeof users;
+  walletCore: typeof walletCore;
+  wallets: typeof wallets;
 }>;
 
 /**

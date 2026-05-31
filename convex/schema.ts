@@ -49,12 +49,53 @@ export default defineSchema({
   })
     .index("by_token_hash", ["tokenHash"])
     .index("by_user", ["userId"]),
-  walletEvents: defineTable({
-    amount: v.number(),
-    kind: v.string(),
-    status: v.string(),
+  wallets: defineTable({
+    availableBalance: v.number(),
+    createdAt: v.number(),
+    heldBalance: v.number(),
+    unit: v.literal("sats"),
+    updatedAt: v.number(),
     userId: v.id("users"),
   }).index("by_user", ["userId"]),
+  walletEvents: defineTable({
+    amount: v.number(),
+    availableBalanceAfter: v.number(),
+    availableDelta: v.number(),
+    createdAt: v.number(),
+    heldBalanceAfter: v.number(),
+    heldDelta: v.number(),
+    idempotencyKey: v.string(),
+    kind: v.union(
+      v.literal("deposit_credit"),
+      v.literal("bet_debit"),
+      v.literal("payout_credit"),
+      v.literal("withdrawal_hold"),
+      v.literal("withdrawal_capture"),
+      v.literal("withdrawal_release"),
+      v.literal("refund_credit"),
+      v.literal("manual_adjustment"),
+    ),
+    sourceId: v.string(),
+    sourceType: v.union(
+      v.literal("deposit"),
+      v.literal("withdrawal"),
+      v.literal("bet"),
+      v.literal("refund"),
+      v.literal("manual_adjustment"),
+      v.literal("system"),
+    ),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("completed"),
+      v.literal("failed"),
+      v.literal("canceled"),
+    ),
+    userId: v.id("users"),
+    walletId: v.id("wallets"),
+  })
+    .index("by_user_created_at", ["userId", "createdAt"])
+    .index("by_user_idempotency", ["userId", "idempotencyKey"])
+    .index("by_user_source_kind", ["userId", "sourceType", "sourceId", "kind"]),
   gameRounds: defineTable({
     betAmount: v.number(),
     payoutAmount: v.optional(v.number()),

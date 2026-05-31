@@ -290,16 +290,20 @@ export function App() {
   const pointerDropActiveRef = useRef(false);
   const keyDropActiveRef = useRef(false);
   const lastDropActivationAtRef = useRef(0);
+  const lastScrollYRef = useRef(0);
+  const ensuredWalletSessionRef = useRef<string | null>(null);
   const [sessionToken, setSessionToken] = useState(() => getSavedPasskeySession());
   const [isDevSignedIn, setIsDevSignedIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState<"register" | "signin" | "signout" | null>(null);
+  const [isControlSheetHidden, setIsControlSheetHidden] = useState(false);
   const [view, setView] = useState(() => snapshot(gameRef.current));
   const beginPasskeyRegistration = useMutation(api.users.beginPasskeyRegistration);
   const verifyPasskeyRegistration = useMutation(api.users.verifyPasskeyRegistration);
   const beginPasskeyAuthentication = useMutation(api.users.beginPasskeyAuthentication);
   const verifyPasskeyAuthentication = useMutation(api.users.verifyPasskeyAuthentication);
   const signOutPasskey = useMutation(api.users.signOutPasskey);
+  const ensureWallet = useMutation(api.wallets.ensureWallet);
   const profile = useQuery(api.users.getSessionUser, sessionToken ? { sessionToken } : "skip");
   const accountProfile = isDevSignedIn ? DEV_PROFILE : profile;
   const accountLabel = accountProfile?.publicId ?? "Passkey";
@@ -889,6 +893,59 @@ export function App() {
     }
   }, [profile, sessionToken]);
 
+  useEffect(() => {
+    if (!sessionToken || !profile) {
+      ensuredWalletSessionRef.current = null;
+      return;
+    }
+
+    if (ensuredWalletSessionRef.current === sessionToken) {
+      return;
+    }
+
+    ensuredWalletSessionRef.current = sessionToken;
+    ensureWallet({ sessionToken }).catch((error) => {
+      ensuredWalletSessionRef.current = null;
+      setAuthError(error instanceof Error ? error.message : "Wallet setup failed.");
+    });
+  }, [ensureWallet, profile, sessionToken]);
+
+  useEffect(() => {
+    if (!isSignedIn) {
+      setIsControlSheetHidden(false);
+      return;
+    }
+
+    const mobileQuery = window.matchMedia("(max-width: 900px)");
+    lastScrollYRef.current = window.scrollY;
+
+    function syncSheetForViewport() {
+      if (!mobileQuery.matches) {
+        setIsControlSheetHidden(false);
+      }
+    }
+
+    function handleScroll() {
+      if (!mobileQuery.matches) return;
+
+      const nextScrollY = Math.max(0, window.scrollY);
+      const delta = nextScrollY - lastScrollYRef.current;
+      if (Math.abs(delta) < 8) return;
+
+      setIsControlSheetHidden(nextScrollY > 24 && delta > 0);
+      lastScrollYRef.current = nextScrollY;
+    }
+
+    syncSheetForViewport();
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    mobileQuery.addEventListener("change", syncSheetForViewport);
+
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+      mobileQuery.removeEventListener("change", syncSheetForViewport);
+    };
+  }, [isSignedIn]);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: this mounts canvas observers and commit prefill once.
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -940,8 +997,16 @@ export function App() {
     };
   });
 
+  const shellClassName = [
+    "app-shell",
+    isSignedIn ? "is-playing" : "is-logged-out",
+    isControlSheetHidden ? "is-control-sheet-hidden" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <main className={`app-shell ${isSignedIn ? "is-playing" : "is-logged-out"}`}>
+    <main className={shellClassName}>
       <section
         className={`control-panel ${isSignedIn ? "play-panel" : "auth-panel"}`}
         aria-label={isSignedIn ? "Game controls" : "Account access"}
@@ -1187,6 +1252,12 @@ export function App() {
           height="1200"
           aria-label="Plinko game board"
         />
+        {isSignedIn ? (
+          <div className="board-hud" aria-hidden="true">
+            <span>{formatNumber(view.balance, 0)} sats</span>
+            <span>{profileStatus}</span>
+          </div>
+        ) : null}
         {!isSignedIn ? (
           <div className="board-lock" aria-hidden="true">
             <span>Passkey account</span>

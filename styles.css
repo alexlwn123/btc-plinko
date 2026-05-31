@@ -679,11 +679,49 @@ input[type="range"] {
   line-height: 1.1;
 }
 
+.board-hud {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  left: 14px;
+  display: none;
+  justify-content: space-between;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.board-hud span {
+  min-width: 0;
+  overflow: hidden;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  color: var(--text);
+  background: rgba(11, 13, 18, 0.72);
+  backdrop-filter: blur(14px);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.board-hud span:first-child {
+  color: var(--green);
+}
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;
     width: min(100vw - 24px, 680px);
     margin: 12px auto;
+  }
+
+  .app-shell.is-playing {
+    width: min(100vw, 680px);
+    min-height: 100svh;
+    margin: 0 auto;
+    padding: 10px 10px calc(188px + env(safe-area-inset-bottom));
   }
 
   .app-shell.is-logged-out {
@@ -692,6 +730,13 @@ input[type="range"] {
 
   .control-panel {
     order: 2;
+  }
+
+  .is-playing .control-panel {
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 0;
   }
 
   .is-logged-out .control-panel {
@@ -704,8 +749,103 @@ input[type="range"] {
     min-height: 0;
   }
 
+  .is-playing .board-panel {
+    width: min(100%, 72svh, 680px);
+    z-index: 1;
+  }
+
   .is-logged-out .board-panel {
     order: 2;
+  }
+
+  .is-playing .board-hud {
+    display: flex;
+  }
+
+  .is-playing .play-hero,
+  .is-playing .play-ledger,
+  .is-playing .cashier-strip {
+    margin: 0 8px;
+  }
+
+  .is-playing .game-control-group {
+    position: fixed;
+    right: max(0px, calc((100vw - 680px) / 2));
+    bottom: 0;
+    left: max(0px, calc((100vw - 680px) / 2));
+    z-index: 20;
+    display: grid;
+    grid-template-areas:
+      "bet drop"
+      "rows risk";
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
+    border: 1px solid var(--line);
+    border-bottom: 0;
+    border-radius: 8px 8px 0 0;
+    background: rgba(15, 18, 24, 0.96);
+    box-shadow: 0 -22px 70px rgba(0, 0, 0, 0.52);
+    backdrop-filter: blur(18px);
+    transition: transform 180ms ease, box-shadow 180ms ease;
+    will-change: transform;
+  }
+
+  .is-playing.is-control-sheet-hidden .game-control-group {
+    pointer-events: none;
+    transform: translateY(calc(100% + 8px));
+    box-shadow: none;
+  }
+
+  .is-playing .game-control-group .field:nth-child(1) {
+    grid-area: bet;
+  }
+
+  .is-playing .game-control-group .field:nth-child(2) {
+    grid-area: rows;
+  }
+
+  .is-playing .game-control-group .field:nth-child(3) {
+    grid-area: risk;
+  }
+
+  .is-playing .game-control-group .drop-button {
+    grid-area: drop;
+    align-self: end;
+    min-height: 52px;
+  }
+
+  .is-playing .game-control-group .field {
+    gap: 6px;
+  }
+
+  .is-playing .game-control-group label,
+  .is-playing .game-control-group .control-label,
+  .is-playing .game-control-group output {
+    font-size: 0.66rem;
+  }
+
+  .is-playing .game-control-group .bet-control {
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
+  }
+
+  .is-playing .game-control-group .bet-control input {
+    padding: 11px 6px;
+  }
+
+  .is-playing .game-control-group .segmented {
+    gap: 4px;
+    padding: 4px;
+  }
+
+  .is-playing .game-control-group .segmented button {
+    padding: 8px 4px;
+    font-size: 0.78rem;
+  }
+
+  .is-playing .history-panel,
+  .is-playing .fairness-panel {
+    margin: 0 8px;
   }
 
   #board {
@@ -719,6 +859,11 @@ input[type="range"] {
     width: 100%;
     min-height: 100vh;
     margin: 0;
+  }
+
+  .app-shell.is-playing {
+    width: 100%;
+    padding: 8px 8px calc(188px + env(safe-area-inset-bottom));
   }
 
   .control-panel,
@@ -770,5 +915,20 @@ input[type="range"] {
     right: 12px;
     bottom: 12px;
     min-width: 0;
+  }
+
+  .board-hud {
+    top: 10px;
+    right: 10px;
+    left: 10px;
+  }
+
+  .is-playing .game-control-group {
+    right: 0;
+    left: 0;
+    grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+    border-right: 0;
+    border-left: 0;
+    border-radius: 8px 8px 0 0;
   }
 }
