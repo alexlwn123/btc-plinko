@@ -355,6 +355,25 @@ function formatCashierType(type: "deposit" | "withdrawal") {
   return type === "deposit" ? "Deposit" : "Withdraw";
 }
 
+function formatAdminDate(timestamp: number) {
+  return new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+    month: "short",
+    second: "2-digit",
+  }).format(timestamp);
+}
+
+function formatPercent(value: number) {
+  return `${value.toFixed(2)}%`;
+}
+
+function formatNetAmount(value: number) {
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${formatNumber(value, 0)}`;
+}
+
 function canRetryCashierStatus(status: string) {
   return status === "failed" || status === "canceled";
 }
@@ -403,6 +422,7 @@ export function App() {
   const [authBusy, setAuthBusy] = useState<"register" | "signin" | "signout" | null>(null);
   const [isControlSheetHidden, setIsControlSheetHidden] = useState(false);
   const [isCashierOpen, setIsCashierOpen] = useState(false);
+  const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [cashierTab, setCashierTab] = useState<CashierTab>("deposit");
   const [depositInput, setDepositInput] = useState(DEFAULT_DEPOSIT_AMOUNT);
   const [withdrawInput, setWithdrawInput] = useState(DEFAULT_WITHDRAW_AMOUNT);
@@ -430,6 +450,11 @@ export function App() {
   const recentRounds = useQuery(
     api.plinko.getRecentRounds,
     sessionToken ? { sessionToken } : "skip",
+  );
+  const canViewAdmin = Boolean(sessionToken && profile?.role === "admin");
+  const adminMetrics = useQuery(
+    api.admin.getSiteMetrics,
+    canViewAdmin && isAdminOpen && sessionToken ? { sessionToken } : "skip",
   );
   const accountProfile = isDevSignedIn ? DEV_PROFILE : profile;
   const accountLabel = accountProfile?.publicId ?? "Passkey";
@@ -1097,6 +1122,8 @@ export function App() {
     setIsDevSignedIn(false);
     clearPasskeySession();
     setSessionToken(null);
+    setIsAdminOpen(false);
+    setIsCashierOpen(false);
 
     try {
       if (token) {
@@ -1232,6 +1259,25 @@ export function App() {
   }, [isCashierOpen]);
 
   useEffect(() => {
+    if (!isAdminOpen) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsAdminOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isAdminOpen]);
+
+  useEffect(() => {
+    if (!canViewAdmin) {
+      setIsAdminOpen(false);
+    }
+  }, [canViewAdmin]);
+
+  useEffect(() => {
     if (!isSignedIn) {
       setIsControlSheetHidden(false);
       return;
@@ -1340,14 +1386,25 @@ export function App() {
                   <p className="eyebrow">Account active</p>
                   <h1>Plinko</h1>
                 </div>
-                <button
-                  className="panel-link"
-                  type="button"
-                  disabled={authBusy !== null}
-                  onClick={handlePasskeySignOut}
-                >
-                  Sign out
-                </button>
+                <div className="panel-actions">
+                  {canViewAdmin ? (
+                    <button
+                      className="panel-link"
+                      type="button"
+                      onClick={() => setIsAdminOpen(true)}
+                    >
+                      Admin
+                    </button>
+                  ) : null}
+                  <button
+                    className="panel-link"
+                    type="button"
+                    disabled={authBusy !== null}
+                    onClick={handlePasskeySignOut}
+                  >
+                    Sign out
+                  </button>
+                </div>
               </div>
 
               <div className="play-ledger" aria-label="Account summary">
@@ -1859,6 +1916,167 @@ export function App() {
                     )}
                   </div>
                 ) : null}
+              </>
+            )}
+          </dialog>
+        </div>
+      ) : null}
+
+      {isAdminOpen && canViewAdmin ? (
+        <div
+          className="cashier-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setIsAdminOpen(false);
+            }
+          }}
+        >
+          <dialog className="cashier-drawer admin-drawer" aria-labelledby="adminTitle" open>
+            <header className="cashier-header">
+              <div>
+                <p className="eyebrow">Admin</p>
+                <h2 id="adminTitle">Site Numbers</h2>
+              </div>
+              <button className="panel-link" type="button" onClick={() => setIsAdminOpen(false)}>
+                Close
+              </button>
+            </header>
+
+            {!adminMetrics ? (
+              <div className="cashier-empty">Loading metrics</div>
+            ) : (
+              <>
+                <div className="admin-meta-row">
+                  <span>Generated</span>
+                  <strong>{formatAdminDate(adminMetrics.generatedAt)}</strong>
+                </div>
+
+                <section className="admin-metric-grid" aria-label="Site totals">
+                  <article className="admin-metric">
+                    <span>Players</span>
+                    <strong>{formatNumber(adminMetrics.users.totalCount, 0)}</strong>
+                    <small>{formatNumber(adminMetrics.users.active24h, 0)} active 24h</small>
+                  </article>
+                  <article className="admin-metric">
+                    <span>Wallets</span>
+                    <strong>{formatNumber(adminMetrics.wallets.totalBalance, 0)}</strong>
+                    <small>{formatNumber(adminMetrics.wallets.heldBalance, 0)} held</small>
+                  </article>
+                  <article className="admin-metric">
+                    <span>Deposits</span>
+                    <strong>
+                      {formatNumber(adminMetrics.deposits.lifetime.completedAmount, 0)}
+                    </strong>
+                    <small>
+                      {formatNumber(adminMetrics.deposits.lifetime.pendingAmount, 0)} pending
+                    </small>
+                  </article>
+                  <article className="admin-metric">
+                    <span>Withdrawals</span>
+                    <strong>
+                      {formatNumber(adminMetrics.withdrawals.lifetime.completedAmount, 0)}
+                    </strong>
+                    <small>
+                      {formatNumber(adminMetrics.withdrawals.lifetime.pendingAmount, 0)} pending
+                    </small>
+                  </article>
+                  <article className="admin-metric">
+                    <span>Wagered</span>
+                    <strong>{formatNumber(adminMetrics.rounds.lifetime.wageredAmount, 0)}</strong>
+                    <small>
+                      {formatNumber(adminMetrics.rounds.last24h.wageredAmount, 0)} in 24h
+                    </small>
+                  </article>
+                  <article className="admin-metric">
+                    <span>Net</span>
+                    <strong>
+                      {formatNetAmount(adminMetrics.rounds.lifetime.netRevenueAmount)}
+                    </strong>
+                    <small>{formatPercent(adminMetrics.rounds.lifetime.holdPercent)} hold</small>
+                  </article>
+                </section>
+
+                <section className="admin-risk-grid" aria-label="Operational review">
+                  <div>
+                    <span>Pending deposits</span>
+                    <strong>{adminMetrics.deposits.lifetime.pendingCount}</strong>
+                  </div>
+                  <div>
+                    <span>Pending withdrawals</span>
+                    <strong>{adminMetrics.withdrawals.lifetime.pendingCount}</strong>
+                  </div>
+                  <div>
+                    <span>Settling rounds</span>
+                    <strong>{adminMetrics.rounds.lifetime.settlingCount}</strong>
+                  </div>
+                  <div>
+                    <span>Failed rounds</span>
+                    <strong>{adminMetrics.rounds.lifetime.failedCount}</strong>
+                  </div>
+                  <div>
+                    <span>Locked users</span>
+                    <strong>{adminMetrics.users.lockedCount}</strong>
+                  </div>
+                  <div>
+                    <span>Review users</span>
+                    <strong>{adminMetrics.users.pendingReviewCount}</strong>
+                  </div>
+                </section>
+
+                <section className="admin-section" aria-label="Recent rounds">
+                  <div className="label-row">
+                    <span className="control-label">Recent rounds</span>
+                    <span>Last {adminMetrics.recentRounds.length}</span>
+                  </div>
+                  <ol className="admin-list">
+                    {adminMetrics.recentRounds.length === 0 ? (
+                      <li className="cashier-empty">No rounds</li>
+                    ) : (
+                      adminMetrics.recentRounds.map((round) => (
+                        <li key={round.id} className={`admin-row ${round.status}`}>
+                          <div>
+                            <strong>{formatNumber(round.betAmount, 0)} bet</strong>
+                            <span>{formatAdminDate(round.createdAt)}</span>
+                          </div>
+                          <div>
+                            <strong>{formatNumber(round.payoutAmount, 0)} paid</strong>
+                            <span>
+                              {round.multiplier.toFixed(2)}x / {round.rows} / {round.risk}
+                            </span>
+                          </div>
+                          <span className={`cashier-status ${round.status}`}>{round.status}</span>
+                        </li>
+                      ))
+                    )}
+                  </ol>
+                </section>
+
+                <section className="admin-section" aria-label="Recent cashier activity">
+                  <div className="label-row">
+                    <span className="control-label">Recent cashier</span>
+                    <span>Last {adminMetrics.recentCashier.length}</span>
+                  </div>
+                  <ol className="admin-list">
+                    {adminMetrics.recentCashier.length === 0 ? (
+                      <li className="cashier-empty">No cashier activity</li>
+                    ) : (
+                      adminMetrics.recentCashier.map((entry) => (
+                        <li key={entry.id} className={`admin-row ${entry.status}`}>
+                          <div>
+                            <strong>{formatCashierType(entry.type)}</strong>
+                            <span>{formatAdminDate(entry.createdAt)}</span>
+                          </div>
+                          <div>
+                            <strong>{formatNumber(entry.amount, 0)}</strong>
+                            <span>Sats</span>
+                          </div>
+                          <span className={`cashier-status ${entry.status}`}>{entry.status}</span>
+                        </li>
+                      ))
+                    )}
+                  </ol>
+                </section>
               </>
             )}
           </dialog>

@@ -163,6 +163,13 @@ h2 {
   color: var(--muted);
 }
 
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .account-stack {
   display: flex;
   gap: 10px;
@@ -874,6 +881,12 @@ input[type="range"] {
   background: rgba(243, 91, 91, 0.1);
 }
 
+.cashier-status.settling {
+  border-color: rgba(245, 188, 66, 0.3);
+  color: var(--amber);
+  background: rgba(245, 188, 66, 0.1);
+}
+
 .cashier-status.canceled {
   border-color: rgba(154, 166, 182, 0.22);
   color: var(--muted);
@@ -909,6 +922,151 @@ input[type="range"] {
   font-size: 0.86rem;
   font-weight: 900;
   text-transform: uppercase;
+}
+
+.admin-drawer {
+  width: min(100%, 760px);
+}
+
+.admin-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #101319;
+}
+
+.admin-meta-row span,
+.admin-metric span,
+.admin-metric small,
+.admin-risk-grid span,
+.admin-row span,
+.admin-section .label-row > span:last-child {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.admin-meta-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.84rem;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.admin-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.admin-metric {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #101319;
+}
+
+.admin-metric strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--green);
+  font-size: clamp(1.25rem, 4vw, 2.05rem);
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-metric:nth-child(4) strong,
+.admin-metric:nth-child(6) strong {
+  color: var(--amber);
+}
+
+.admin-risk-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.admin-risk-grid div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.admin-risk-grid strong {
+  color: var(--text);
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.admin-section {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.admin-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.admin-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #101319;
+}
+
+.admin-row > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.admin-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.08;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-row.completed {
+  border-color: rgba(0, 228, 141, 0.18);
+}
+
+.admin-row.pending,
+.admin-row.settling {
+  border-color: rgba(245, 188, 66, 0.22);
+}
+
+.admin-row.failed {
+  border-color: rgba(243, 91, 91, 0.24);
 }
 
 .board-panel {
@@ -1237,6 +1395,18 @@ input[type="range"] {
   .cashier-status {
     grid-column: 1 / -1;
     width: fit-content;
+  }
+
+  .admin-metric-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .admin-risk-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .admin-row {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .is-playing .game-control-group {

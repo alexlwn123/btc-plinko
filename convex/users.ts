@@ -132,11 +132,22 @@ export async function requireActiveUserBySession(
   return user;
 }
 
+export async function requireAdminUserBySession(ctx: QueryCtx | MutationCtx, sessionToken: string) {
+  const user = await requireActiveUserBySession(ctx, sessionToken);
+
+  if (user.role !== "admin") {
+    throw new Error("Admin access required.");
+  }
+
+  return user;
+}
+
 function serializeUser(user: Doc<"users">) {
   return {
     accountState: user.accountState,
     authMethod: user.authMethod ?? "passkey",
     publicId: user.publicId ?? "anonymous",
+    role: user.role ?? "player",
   };
 }
 
@@ -235,6 +246,7 @@ export const verifyPasskeyRegistration = mutation({
       createdAt: now,
       lastSeenAt: now,
       publicId: `anon-${randomBase64Url(5)}`,
+      role: "player",
     });
     const walletId = await ctx.db.insert("wallets", {
       availableBalance: INITIAL_PLAYABLE_BALANCE_SATS,

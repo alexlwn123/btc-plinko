@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as admin from "../admin.js";
 import type * as cashier from "../cashier.js";
 import type * as cashierCore from "../cashierCore.js";
 import type * as plinko from "../plinko.js";
@@ -23,6 +24,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  admin: typeof admin;
   cashier: typeof cashier;
   cashierCore: typeof cashierCore;
   plinko: typeof plinko;

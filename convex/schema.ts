@@ -15,6 +15,7 @@ export default defineSchema({
     displayName: v.optional(v.string()),
     lastSeenAt: v.number(),
     publicId: v.optional(v.string()),
+    role: v.optional(v.union(v.literal("player"), v.literal("admin"))),
   }).index("by_anonymous_id", ["anonymousId"]),
   passkeyCredentials: defineTable({
     backedUp: v.boolean(),

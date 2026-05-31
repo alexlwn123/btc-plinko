@@ -121,6 +121,7 @@ This plan turns the current Plinko demo into an account-based casino game using 
 
 ## Phase 7: Admin And Support Tools
 
+- [x] Add a read-only admin dashboard for sitewide metrics.
 - [ ] Add user lookup.
 - [ ] Add wallet history lookup.
 - [ ] Add deposit and withdrawal status lookup.
