@@ -118,6 +118,13 @@ h1 {
   letter-spacing: 0;
 }
 
+h2 {
+  margin: 0;
+  font-size: 2.45rem;
+  line-height: 0.96;
+  letter-spacing: 0;
+}
+
 .auth-hero {
   display: grid;
   gap: 8px;
@@ -626,6 +633,273 @@ input[type="range"] {
   white-space: nowrap;
 }
 
+.cashier-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px;
+  background: rgba(2, 5, 9, 0.64);
+  backdrop-filter: blur(8px);
+}
+
+.cashier-drawer {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto auto auto 1fr;
+  gap: 16px;
+  width: min(100%, 440px);
+  max-height: calc(100svh - 32px);
+  margin: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 20px;
+  color: var(--text);
+  background: linear-gradient(180deg, rgba(0, 228, 141, 0.09), transparent 26%),
+    rgba(15, 18, 24, 0.98);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.58);
+}
+
+.cashier-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cashier-balance-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.cashier-balance-grid > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #101319;
+}
+
+.cashier-balance-grid > div:last-child {
+  grid-column: 1 / -1;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.cashier-balance-grid span,
+.cashier-balance-grid small,
+.cashier-amount-row span,
+.cashier-transaction-main span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.cashier-balance-grid strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--green);
+  font-size: 1.55rem;
+  line-height: 1;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.cashier-balance-grid > div:last-child strong {
+  color: var(--text);
+  font-size: 0.9rem;
+  text-align: right;
+}
+
+.cashier-alert {
+  padding: 11px 12px;
+  border: 1px solid rgba(243, 91, 91, 0.32);
+  border-radius: 8px;
+  color: #ff9b9b;
+  background: rgba(243, 91, 91, 0.11);
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.cashier-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #101319;
+}
+
+.cashier-tabs button {
+  min-width: 0;
+  padding: 10px 6px;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.cashier-tabs button.active {
+  color: #07110d;
+  background: var(--green);
+}
+
+.cashier-form {
+  display: grid;
+  gap: 12px;
+}
+
+.cashier-form button {
+  min-height: 52px;
+  border-radius: 8px;
+}
+
+.cashier-amount-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #101319;
+}
+
+.cashier-amount-row input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  padding: 14px 12px;
+  color: var(--text);
+  background: transparent;
+}
+
+.cashier-amount-row input:focus {
+  box-shadow: inset 0 0 0 1px rgba(0, 228, 141, 0.56);
+}
+
+.cashier-amount-row span {
+  padding: 0 12px;
+}
+
+.cashier-history {
+  min-height: 160px;
+}
+
+.cashier-transaction-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cashier-transaction {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #101319;
+}
+
+.cashier-transaction-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.cashier-transaction-main div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cashier-transaction-main strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.95rem;
+  line-height: 1.05;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cashier-status {
+  min-width: 76px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.cashier-status.pending {
+  border-color: rgba(245, 188, 66, 0.3);
+  color: var(--amber);
+  background: rgba(245, 188, 66, 0.1);
+}
+
+.cashier-status.completed {
+  border-color: rgba(0, 228, 141, 0.3);
+  color: var(--green);
+  background: rgba(0, 228, 141, 0.1);
+}
+
+.cashier-status.failed {
+  border-color: rgba(243, 91, 91, 0.3);
+  color: #ff9b9b;
+  background: rgba(243, 91, 91, 0.1);
+}
+
+.cashier-status.canceled {
+  border-color: rgba(154, 166, 182, 0.22);
+  color: var(--muted);
+  background: rgba(154, 166, 182, 0.08);
+}
+
+.cashier-transaction-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cashier-transaction-actions button {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--panel-2);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.cashier-empty {
+  display: grid;
+  place-items: center;
+  min-height: 116px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: #101319;
+  font-size: 0.86rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
 .board-panel {
   position: relative;
   align-self: start;
@@ -921,6 +1195,30 @@ input[type="range"] {
     top: 10px;
     right: 10px;
     left: 10px;
+  }
+
+  .cashier-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .cashier-drawer {
+    width: 100%;
+    max-height: 88svh;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 8px 8px 0 0;
+    padding: 18px 14px calc(18px + env(safe-area-inset-bottom));
+  }
+
+  .cashier-transaction-main {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .cashier-status {
+    grid-column: 1 / -1;
+    width: fit-content;
   }
 
   .is-playing .game-control-group {

@@ -30,6 +30,9 @@ const PLAY_HISTORY_LIMIT = 12;
 const ROW_MIN = 8;
 const ROW_MAX = 16;
 const ROW_STEP = 2;
+const DEFAULT_DEPOSIT_AMOUNT = "1000";
+const DEFAULT_WITHDRAW_AMOUNT = "250";
+const CASHIER_HISTORY_LIMIT = 16;
 const DEV_PROFILE = {
   accountState: "active",
   authMethod: "passkey",
@@ -128,6 +131,19 @@ type ViewState = {
   revealedSeed: string;
   proofResult: string;
 };
+
+type CashierTab = "deposit" | "withdraw" | "history";
+
+type CashierBusy =
+  | "deposit:create"
+  | "deposit:complete"
+  | "deposit:fail"
+  | "deposit:cancel"
+  | "withdrawal:create"
+  | "withdrawal:complete"
+  | "withdrawal:fail"
+  | "withdrawal:cancel"
+  | "retry";
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -254,6 +270,36 @@ function payoutTone(entry: PlayHistoryEntry) {
   return "win";
 }
 
+function parseCashierAmount(value: string) {
+  const amount = Number(value);
+  return Number.isSafeInteger(amount) && amount > 0 ? amount : null;
+}
+
+function newCashierRequestId(kind: "deposit" | "withdrawal") {
+  if ("randomUUID" in crypto) {
+    return `${kind}-${crypto.randomUUID()}`;
+  }
+
+  return `${kind}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function formatCashierDate(timestamp: number) {
+  return new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+    month: "short",
+  }).format(timestamp);
+}
+
+function formatCashierType(type: "deposit" | "withdrawal") {
+  return type === "deposit" ? "Deposit" : "Withdraw";
+}
+
+function canRetryCashierStatus(status: string) {
+  return status === "failed" || status === "canceled";
+}
+
 function multiplierColor(value: number, index: number, rows: number) {
   const edgeDistance = Math.abs(index - rows / 2) / (rows / 2);
   if (edgeDistance > 0.82) return "#f35b5b";
@@ -297,6 +343,12 @@ export function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState<"register" | "signin" | "signout" | null>(null);
   const [isControlSheetHidden, setIsControlSheetHidden] = useState(false);
+  const [isCashierOpen, setIsCashierOpen] = useState(false);
+  const [cashierTab, setCashierTab] = useState<CashierTab>("deposit");
+  const [depositInput, setDepositInput] = useState(DEFAULT_DEPOSIT_AMOUNT);
+  const [withdrawInput, setWithdrawInput] = useState(DEFAULT_WITHDRAW_AMOUNT);
+  const [cashierBusy, setCashierBusy] = useState<CashierBusy | null>(null);
+  const [cashierError, setCashierError] = useState<string | null>(null);
   const [view, setView] = useState(() => snapshot(gameRef.current));
   const beginPasskeyRegistration = useMutation(api.users.beginPasskeyRegistration);
   const verifyPasskeyRegistration = useMutation(api.users.verifyPasskeyRegistration);
@@ -304,7 +356,16 @@ export function App() {
   const verifyPasskeyAuthentication = useMutation(api.users.verifyPasskeyAuthentication);
   const signOutPasskey = useMutation(api.users.signOutPasskey);
   const ensureWallet = useMutation(api.wallets.ensureWallet);
+  const createFakeDeposit = useMutation(api.cashier.createFakeDeposit);
+  const completeFakeDeposit = useMutation(api.cashier.completeFakeDeposit);
+  const failFakeDeposit = useMutation(api.cashier.failFakeDeposit);
+  const cancelFakeDeposit = useMutation(api.cashier.cancelFakeDeposit);
+  const createFakeWithdrawal = useMutation(api.cashier.createFakeWithdrawal);
+  const completeFakeWithdrawal = useMutation(api.cashier.completeFakeWithdrawal);
+  const failFakeWithdrawal = useMutation(api.cashier.failFakeWithdrawal);
+  const cancelFakeWithdrawal = useMutation(api.cashier.cancelFakeWithdrawal);
   const profile = useQuery(api.users.getSessionUser, sessionToken ? { sessionToken } : "skip");
+  const cashier = useQuery(api.cashier.getCashier, sessionToken ? { sessionToken } : "skip");
   const accountProfile = isDevSignedIn ? DEV_PROFILE : profile;
   const accountLabel = accountProfile?.publicId ?? "Passkey";
   const profileStatus =
@@ -320,6 +381,15 @@ export function App() {
           ? "Signing out"
           : null;
   const authPanelStatus = authBusyLabel ?? profileStatus;
+  const walletAvailable = cashier?.wallet.availableBalance ?? 0;
+  const walletHeld = cashier?.wallet.heldBalance ?? 0;
+  const walletStatus = sessionToken ? (cashier ? "Ready" : "Syncing") : "Passkey required";
+  const cashierTransactions = cashier
+    ? [...cashier.deposits, ...cashier.withdrawals]
+        .sort((left, right) => right.createdAt - left.createdAt)
+        .slice(0, CASHIER_HISTORY_LIMIT)
+    : [];
+  const canUseFakeCashierControls = import.meta.env.DEV;
 
   function publish() {
     setView(snapshot(gameRef.current));
@@ -886,6 +956,70 @@ export function App() {
     setIsDevSignedIn(true);
   }
 
+  function openCashier(tab: CashierTab = "deposit") {
+    setCashierTab(tab);
+    setCashierError(null);
+    setIsCashierOpen(true);
+  }
+
+  async function runCashierAction(action: CashierBusy, task: (token: string) => Promise<unknown>) {
+    if (!sessionToken) {
+      setCashierError("Sign in with a passkey account to use the cashier.");
+      return;
+    }
+
+    setCashierBusy(action);
+    setCashierError(null);
+
+    try {
+      await task(sessionToken);
+    } catch (error) {
+      setCashierError(error instanceof Error ? error.message : "Cashier action failed.");
+    } finally {
+      setCashierBusy(null);
+    }
+  }
+
+  async function handleCreateDeposit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const amount = parseCashierAmount(depositInput);
+    if (!amount) {
+      setCashierError("Enter a whole number of sats to deposit.");
+      return;
+    }
+
+    await runCashierAction("deposit:create", async (token) => {
+      await createFakeDeposit({
+        amount,
+        requestId: newCashierRequestId("deposit"),
+        sessionToken: token,
+      });
+      setDepositInput(DEFAULT_DEPOSIT_AMOUNT);
+      setCashierTab("history");
+    });
+  }
+
+  async function handleCreateWithdrawal(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const amount = parseCashierAmount(withdrawInput);
+    if (!amount) {
+      setCashierError("Enter a whole number of sats to withdraw.");
+      return;
+    }
+
+    await runCashierAction("withdrawal:create", async (token) => {
+      await createFakeWithdrawal({
+        amount,
+        requestId: newCashierRequestId("withdrawal"),
+        sessionToken: token,
+      });
+      setWithdrawInput(DEFAULT_WITHDRAW_AMOUNT);
+      setCashierTab("history");
+    });
+  }
+
   useEffect(() => {
     if (sessionToken && profile === null) {
       clearPasskeySession();
@@ -909,6 +1043,19 @@ export function App() {
       setAuthError(error instanceof Error ? error.message : "Wallet setup failed.");
     });
   }, [ensureWallet, profile, sessionToken]);
+
+  useEffect(() => {
+    if (!isCashierOpen) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsCashierOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isCashierOpen]);
 
   useEffect(() => {
     if (!isSignedIn) {
@@ -1006,265 +1153,530 @@ export function App() {
     .join(" ");
 
   return (
-    <main className={shellClassName}>
-      <section
-        className={`control-panel ${isSignedIn ? "play-panel" : "auth-panel"}`}
-        aria-label={isSignedIn ? "Game controls" : "Account access"}
-      >
-        {isSignedIn ? (
-          <>
-            <div className="play-hero">
-              <div className="play-title">
-                <p className="eyebrow">Account active</p>
+    <>
+      <main className={shellClassName}>
+        <section
+          className={`control-panel ${isSignedIn ? "play-panel" : "auth-panel"}`}
+          aria-label={isSignedIn ? "Game controls" : "Account access"}
+        >
+          {isSignedIn ? (
+            <>
+              <div className="play-hero">
+                <div className="play-title">
+                  <p className="eyebrow">Account active</p>
+                  <h1>Plinko</h1>
+                </div>
+                <button
+                  className="panel-link"
+                  type="button"
+                  disabled={authBusy !== null}
+                  onClick={handlePasskeySignOut}
+                >
+                  Sign out
+                </button>
+              </div>
+
+              <div className="play-ledger" aria-label="Account summary">
+                <div className="ledger-balance">
+                  <span>Balance</span>
+                  <strong id="balance">{formatNumber(view.balance, 0)}</strong>
+                  <small>Sats</small>
+                </div>
+                <div>
+                  <span>Wallet</span>
+                  <strong>
+                    {sessionToken ? `${formatNumber(walletAvailable, 0)} sats` : walletStatus}
+                  </strong>
+                </div>
+                <div>
+                  <span>Account</span>
+                  <strong>{accountLabel}</strong>
+                </div>
+                <div>
+                  <span>Status</span>
+                  <strong className={authError ? "error" : ""}>{profileStatus}</strong>
+                </div>
+              </div>
+
+              <button
+                className="cashier-strip"
+                type="button"
+                onClick={() => openCashier("deposit")}
+              >
+                <span>Cashier</span>
+                <strong>{walletStatus}</strong>
+              </button>
+
+              <div className="game-control-group">
+                <div className="field">
+                  <label htmlFor="bet">Bet</label>
+                  <div className="bet-control">
+                    <button
+                      className="icon-button"
+                      type="button"
+                      id="halfBet"
+                      aria-label="Halve bet"
+                      onClick={() => setBet(currentBet() / 2)}
+                    >
+                      1/2
+                    </button>
+                    <input
+                      id="bet"
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={view.betInput}
+                      inputMode="decimal"
+                      onChange={(event) => {
+                        gameRef.current.betInput = event.target.value;
+                        publish();
+                      }}
+                      onBlur={() => setBet(currentBet())}
+                    />
+                    <button
+                      className="icon-button"
+                      type="button"
+                      id="doubleBet"
+                      aria-label="Double bet"
+                      onClick={() => setBet(currentBet() * 2)}
+                    >
+                      2x
+                    </button>
+                  </div>
+                </div>
+
+                <div className="field">
+                  <div className="label-row">
+                    <label htmlFor="rows">Rows</label>
+                    <output id="rowValue" htmlFor="rows">
+                      {view.rows}
+                    </output>
+                  </div>
+                  <input
+                    id="rows"
+                    type="range"
+                    min={ROW_MIN}
+                    max={ROW_MAX}
+                    step={ROW_STEP}
+                    value={view.rows}
+                    disabled={view.isSettingsLocked}
+                    onChange={(event) => handleRowsChange(event.target.value)}
+                  />
+                </div>
+
+                <div className="field">
+                  <span className="control-label">Risk</span>
+                  <fieldset className="segmented" aria-label="Risk level">
+                    {(Object.keys(RISKS) as Risk[]).map((risk) => (
+                      <button
+                        key={risk}
+                        type="button"
+                        data-risk={risk}
+                        className={risk === view.risk ? "active" : ""}
+                        disabled={view.isSettingsLocked}
+                        onClick={() => handleRiskChange(risk)}
+                      >
+                        {RISKS[risk].label}
+                      </button>
+                    ))}
+                  </fieldset>
+                </div>
+
+                <button
+                  id="dropButton"
+                  className="drop-button"
+                  type="button"
+                  disabled={view.isDropDisabled}
+                  onPointerDown={handleDropPointerDown}
+                  onKeyDown={handleDropKeyDown}
+                  onKeyUp={handleDropKeyUp}
+                >
+                  Drop
+                </button>
+              </div>
+
+              <div className="history-panel" aria-label="Play history">
+                <div className="label-row">
+                  <span className="control-label">Play history</span>
+                  <span id="historyCount">Last {PLAY_HISTORY_LIMIT}</span>
+                </div>
+                <ol id="playHistory" className="play-history" aria-live="polite">
+                  {view.playHistory.length === 0 ? (
+                    <li className="history-empty">No payouts yet</li>
+                  ) : (
+                    view.playHistory.map((entry) => {
+                      const multiplier = `${entry.multiplier.toFixed(2)}x`;
+                      return (
+                        <li
+                          key={entry.id}
+                          className={`history-item ${payoutTone(entry)}`}
+                          aria-label={`Payout ${formatNumber(entry.payout, 0)} sats at ${multiplier}`}
+                        >
+                          <strong>{formatNumber(entry.payout, 0)}</strong>
+                          <span>{multiplier}</span>
+                        </li>
+                      );
+                    })
+                  )}
+                </ol>
+              </div>
+
+              <div className="fairness-panel">
+                <div className="label-row">
+                  <span className="control-label">Provably fair</span>
+                  <span id="fairNonce">{view.fairNonce}</span>
+                </div>
+                <div className="field">
+                  <label htmlFor="clientSeed">Client seed</label>
+                  <input
+                    id="clientSeed"
+                    type="text"
+                    value={view.clientSeed}
+                    spellCheck={false}
+                    autoComplete="off"
+                    onChange={(event) => {
+                      gameRef.current.fairness.clientSeed = event.target.value;
+                      publish();
+                    }}
+                  />
+                </div>
+                <div className="seed-grid">
+                  <span>Server hash</span>
+                  <code id="serverHash">{view.serverHash}</code>
+                  <span>Revealed seed</span>
+                  <code id="revealedSeed">{view.revealedSeed}</code>
+                  <span>Proof</span>
+                  <code id="proofResult">{view.proofResult}</code>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="auth-hero">
+                <p className="eyebrow">Account access</p>
                 <h1>Plinko</h1>
               </div>
-              <button
-                className="panel-link"
-                type="button"
-                disabled={authBusy !== null}
-                onClick={handlePasskeySignOut}
-              >
-                Sign out
-              </button>
-            </div>
 
-            <div className="play-ledger" aria-label="Account summary">
-              <div className="ledger-balance">
-                <span>Balance</span>
-                <strong id="balance">{formatNumber(view.balance, 0)}</strong>
+              <div className="auth-status" aria-live="polite">
+                <span>Anonymous</span>
+                <strong>{accountLabel}</strong>
+                <small className={authError ? "error" : ""}>{authPanelStatus}</small>
+              </div>
+
+              <div className="auth-actions">
+                <button
+                  className="auth-primary"
+                  type="button"
+                  disabled={authBusy !== null}
+                  onClick={handleCreatePasskey}
+                >
+                  Create account
+                </button>
+                <button
+                  className="auth-secondary"
+                  type="button"
+                  disabled={authBusy !== null}
+                  onClick={handleSignInPasskey}
+                >
+                  Sign in
+                </button>
+                {canUseDevSignIn ? (
+                  <button className="auth-dev" type="button" onClick={handleDevSignIn}>
+                    Enter dev mode
+                  </button>
+                ) : null}
+              </div>
+
+              <div className="auth-ledger" aria-label="Account status">
+                <span>Status</span>
+                <strong>{authPanelStatus}</strong>
+                <span>Unit</span>
+                <strong>Sats</strong>
+                <span>Cashier</span>
+                <strong>Locked</strong>
+              </div>
+            </>
+          )}
+        </section>
+
+        <section
+          className={`board-panel ${isSignedIn ? "" : "board-preview"}`}
+          aria-label="Plinko board"
+        >
+          <canvas
+            ref={canvasRef}
+            id="board"
+            width="1200"
+            height="1200"
+            aria-label="Plinko game board"
+          />
+          {isSignedIn ? (
+            <div className="board-hud" aria-hidden="true">
+              <span>{formatNumber(view.balance, 0)} sats</span>
+              <span>{profileStatus}</span>
+            </div>
+          ) : null}
+          {!isSignedIn ? (
+            <div className="board-lock" aria-hidden="true">
+              <span>Passkey account</span>
+              <strong>Sign in to play</strong>
+            </div>
+          ) : null}
+        </section>
+      </main>
+
+      {isCashierOpen ? (
+        <div
+          className="cashier-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setIsCashierOpen(false);
+            }
+          }}
+        >
+          <dialog className="cashier-drawer" aria-labelledby="cashierTitle" open>
+            <header className="cashier-header">
+              <div>
+                <p className="eyebrow">Cashier</p>
+                <h2 id="cashierTitle">Wallet</h2>
+              </div>
+              <button className="panel-link" type="button" onClick={() => setIsCashierOpen(false)}>
+                Close
+              </button>
+            </header>
+
+            <div className="cashier-balance-grid" aria-label="Wallet balance">
+              <div>
+                <span>Available</span>
+                <strong>{formatNumber(walletAvailable, 0)}</strong>
                 <small>Sats</small>
               </div>
               <div>
-                <span>Account</span>
-                <strong>{accountLabel}</strong>
+                <span>Held</span>
+                <strong>{formatNumber(walletHeld, 0)}</strong>
+                <small>Sats</small>
               </div>
               <div>
                 <span>Status</span>
-                <strong className={authError ? "error" : ""}>{profileStatus}</strong>
+                <strong>{walletStatus}</strong>
               </div>
             </div>
 
-            <button className="cashier-strip" type="button" disabled>
-              <span>Cashier</span>
-              <strong>Locked</strong>
-            </button>
+            {cashierError ? (
+              <div className="cashier-alert" role="alert">
+                {cashierError}
+              </div>
+            ) : null}
 
-            <div className="game-control-group">
-              <div className="field">
-                <label htmlFor="bet">Bet</label>
-                <div className="bet-control">
+            {!sessionToken ? (
+              <div className="cashier-empty">Passkey account required</div>
+            ) : (
+              <>
+                <div className="cashier-tabs" role="tablist" aria-label="Cashier sections">
                   <button
-                    className="icon-button"
                     type="button"
-                    id="halfBet"
-                    aria-label="Halve bet"
-                    onClick={() => setBet(currentBet() / 2)}
+                    role="tab"
+                    aria-selected={cashierTab === "deposit"}
+                    className={cashierTab === "deposit" ? "active" : ""}
+                    onClick={() => setCashierTab("deposit")}
                   >
-                    1/2
+                    Deposit
                   </button>
-                  <input
-                    id="bet"
-                    type="number"
-                    min="1"
-                    step="1"
-                    value={view.betInput}
-                    inputMode="decimal"
-                    onChange={(event) => {
-                      gameRef.current.betInput = event.target.value;
-                      publish();
-                    }}
-                    onBlur={() => setBet(currentBet())}
-                  />
                   <button
-                    className="icon-button"
                     type="button"
-                    id="doubleBet"
-                    aria-label="Double bet"
-                    onClick={() => setBet(currentBet() * 2)}
+                    role="tab"
+                    aria-selected={cashierTab === "withdraw"}
+                    className={cashierTab === "withdraw" ? "active" : ""}
+                    onClick={() => setCashierTab("withdraw")}
                   >
-                    2x
+                    Withdraw
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={cashierTab === "history"}
+                    className={cashierTab === "history" ? "active" : ""}
+                    onClick={() => setCashierTab("history")}
+                  >
+                    History
                   </button>
                 </div>
-              </div>
 
-              <div className="field">
-                <div className="label-row">
-                  <label htmlFor="rows">Rows</label>
-                  <output id="rowValue" htmlFor="rows">
-                    {view.rows}
-                  </output>
-                </div>
-                <input
-                  id="rows"
-                  type="range"
-                  min={ROW_MIN}
-                  max={ROW_MAX}
-                  step={ROW_STEP}
-                  value={view.rows}
-                  disabled={view.isSettingsLocked}
-                  onChange={(event) => handleRowsChange(event.target.value)}
-                />
-              </div>
-
-              <div className="field">
-                <span className="control-label">Risk</span>
-                <fieldset className="segmented" aria-label="Risk level">
-                  {(Object.keys(RISKS) as Risk[]).map((risk) => (
-                    <button
-                      key={risk}
-                      type="button"
-                      data-risk={risk}
-                      className={risk === view.risk ? "active" : ""}
-                      disabled={view.isSettingsLocked}
-                      onClick={() => handleRiskChange(risk)}
-                    >
-                      {RISKS[risk].label}
+                {cashierTab === "deposit" ? (
+                  <form className="cashier-form" onSubmit={handleCreateDeposit}>
+                    <label htmlFor="depositAmount">Deposit amount</label>
+                    <div className="cashier-amount-row">
+                      <input
+                        id="depositAmount"
+                        type="number"
+                        min="1"
+                        step="1"
+                        inputMode="numeric"
+                        value={depositInput}
+                        onChange={(event) => setDepositInput(event.target.value)}
+                      />
+                      <span>Sats</span>
+                    </div>
+                    <button className="auth-primary" type="submit" disabled={cashierBusy !== null}>
+                      Create Deposit
                     </button>
-                  ))}
-                </fieldset>
-              </div>
+                  </form>
+                ) : null}
 
-              <button
-                id="dropButton"
-                className="drop-button"
-                type="button"
-                disabled={view.isDropDisabled}
-                onPointerDown={handleDropPointerDown}
-                onKeyDown={handleDropKeyDown}
-                onKeyUp={handleDropKeyUp}
-              >
-                Drop
-              </button>
-            </div>
+                {cashierTab === "withdraw" ? (
+                  <form className="cashier-form" onSubmit={handleCreateWithdrawal}>
+                    <label htmlFor="withdrawAmount">Withdraw amount</label>
+                    <div className="cashier-amount-row">
+                      <input
+                        id="withdrawAmount"
+                        type="number"
+                        min="1"
+                        step="1"
+                        inputMode="numeric"
+                        value={withdrawInput}
+                        onChange={(event) => setWithdrawInput(event.target.value)}
+                      />
+                      <span>Sats</span>
+                    </div>
+                    <button className="auth-primary" type="submit" disabled={cashierBusy !== null}>
+                      Request Withdraw
+                    </button>
+                  </form>
+                ) : null}
 
-            <div className="history-panel" aria-label="Play history">
-              <div className="label-row">
-                <span className="control-label">Play history</span>
-                <span id="historyCount">Last {PLAY_HISTORY_LIMIT}</span>
-              </div>
-              <ol id="playHistory" className="play-history" aria-live="polite">
-                {view.playHistory.length === 0 ? (
-                  <li className="history-empty">No payouts yet</li>
-                ) : (
-                  view.playHistory.map((entry) => {
-                    const multiplier = `${entry.multiplier.toFixed(2)}x`;
-                    return (
-                      <li
-                        key={entry.id}
-                        className={`history-item ${payoutTone(entry)}`}
-                        aria-label={`Payout ${formatNumber(entry.payout, 0)} sats at ${multiplier}`}
-                      >
-                        <strong>{formatNumber(entry.payout, 0)}</strong>
-                        <span>{multiplier}</span>
-                      </li>
-                    );
-                  })
-                )}
-              </ol>
-            </div>
+                {cashierTab === "history" ? (
+                  <div className="cashier-history" aria-live="polite">
+                    {cashierTransactions.length === 0 ? (
+                      <div className="cashier-empty">No cashier activity</div>
+                    ) : (
+                      <ol className="cashier-transaction-list">
+                        {cashierTransactions.map((entry) => (
+                          <li
+                            key={`${entry.type}-${entry.id}`}
+                            className={`cashier-transaction ${entry.status}`}
+                          >
+                            <div className="cashier-transaction-main">
+                              <div>
+                                <strong>{formatCashierType(entry.type)}</strong>
+                                <span>{formatCashierDate(entry.createdAt)}</span>
+                              </div>
+                              <div>
+                                <strong>{formatNumber(entry.amount, 0)}</strong>
+                                <span>Sats</span>
+                              </div>
+                              <span className={`cashier-status ${entry.status}`}>
+                                {entry.status}
+                              </span>
+                            </div>
 
-            <div className="fairness-panel">
-              <div className="label-row">
-                <span className="control-label">Provably fair</span>
-                <span id="fairNonce">{view.fairNonce}</span>
-              </div>
-              <div className="field">
-                <label htmlFor="clientSeed">Client seed</label>
-                <input
-                  id="clientSeed"
-                  type="text"
-                  value={view.clientSeed}
-                  spellCheck={false}
-                  autoComplete="off"
-                  onChange={(event) => {
-                    gameRef.current.fairness.clientSeed = event.target.value;
-                    publish();
-                  }}
-                />
-              </div>
-              <div className="seed-grid">
-                <span>Server hash</span>
-                <code id="serverHash">{view.serverHash}</code>
-                <span>Revealed seed</span>
-                <code id="revealedSeed">{view.revealedSeed}</code>
-                <span>Proof</span>
-                <code id="proofResult">{view.proofResult}</code>
-              </div>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="auth-hero">
-              <p className="eyebrow">Account access</p>
-              <h1>Plinko</h1>
-            </div>
+                            <div className="cashier-transaction-actions">
+                              {entry.status === "pending" && canUseFakeCashierControls ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={cashierBusy !== null}
+                                    onClick={() =>
+                                      void runCashierAction(
+                                        entry.type === "deposit"
+                                          ? "deposit:complete"
+                                          : "withdrawal:complete",
+                                        (token) =>
+                                          entry.type === "deposit"
+                                            ? completeFakeDeposit({
+                                                depositId: entry.id,
+                                                sessionToken: token,
+                                              })
+                                            : completeFakeWithdrawal({
+                                                sessionToken: token,
+                                                withdrawalId: entry.id,
+                                              }),
+                                      )
+                                    }
+                                  >
+                                    Complete
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={cashierBusy !== null}
+                                    onClick={() =>
+                                      void runCashierAction(
+                                        entry.type === "deposit"
+                                          ? "deposit:fail"
+                                          : "withdrawal:fail",
+                                        (token) =>
+                                          entry.type === "deposit"
+                                            ? failFakeDeposit({
+                                                depositId: entry.id,
+                                                sessionToken: token,
+                                              })
+                                            : failFakeWithdrawal({
+                                                sessionToken: token,
+                                                withdrawalId: entry.id,
+                                              }),
+                                      )
+                                    }
+                                  >
+                                    Fail
+                                  </button>
+                                </>
+                              ) : null}
 
-            <div className="auth-status" aria-live="polite">
-              <span>Anonymous</span>
-              <strong>{accountLabel}</strong>
-              <small className={authError ? "error" : ""}>{authPanelStatus}</small>
-            </div>
+                              {entry.status === "pending" ? (
+                                <button
+                                  type="button"
+                                  disabled={cashierBusy !== null}
+                                  onClick={() =>
+                                    void runCashierAction(
+                                      entry.type === "deposit"
+                                        ? "deposit:cancel"
+                                        : "withdrawal:cancel",
+                                      (token) =>
+                                        entry.type === "deposit"
+                                          ? cancelFakeDeposit({
+                                              depositId: entry.id,
+                                              sessionToken: token,
+                                            })
+                                          : cancelFakeWithdrawal({
+                                              sessionToken: token,
+                                              withdrawalId: entry.id,
+                                            }),
+                                    )
+                                  }
+                                >
+                                  Cancel
+                                </button>
+                              ) : null}
 
-            <div className="auth-actions">
-              <button
-                className="auth-primary"
-                type="button"
-                disabled={authBusy !== null}
-                onClick={handleCreatePasskey}
-              >
-                Create account
-              </button>
-              <button
-                className="auth-secondary"
-                type="button"
-                disabled={authBusy !== null}
-                onClick={handleSignInPasskey}
-              >
-                Sign in
-              </button>
-              {canUseDevSignIn ? (
-                <button className="auth-dev" type="button" onClick={handleDevSignIn}>
-                  Enter dev mode
-                </button>
-              ) : null}
-            </div>
-
-            <div className="auth-ledger" aria-label="Account status">
-              <span>Status</span>
-              <strong>{authPanelStatus}</strong>
-              <span>Unit</span>
-              <strong>Sats</strong>
-              <span>Cashier</span>
-              <strong>Locked</strong>
-            </div>
-          </>
-        )}
-      </section>
-
-      <section
-        className={`board-panel ${isSignedIn ? "" : "board-preview"}`}
-        aria-label="Plinko board"
-      >
-        <canvas
-          ref={canvasRef}
-          id="board"
-          width="1200"
-          height="1200"
-          aria-label="Plinko game board"
-        />
-        {isSignedIn ? (
-          <div className="board-hud" aria-hidden="true">
-            <span>{formatNumber(view.balance, 0)} sats</span>
-            <span>{profileStatus}</span>
-          </div>
-        ) : null}
-        {!isSignedIn ? (
-          <div className="board-lock" aria-hidden="true">
-            <span>Passkey account</span>
-            <strong>Sign in to play</strong>
-          </div>
-        ) : null}
-      </section>
-    </main>
+                              {canRetryCashierStatus(entry.status) ? (
+                                <button
+                                  type="button"
+                                  disabled={cashierBusy !== null}
+                                  onClick={() => {
+                                    if (entry.type === "deposit") {
+                                      setDepositInput(String(entry.amount));
+                                      setCashierTab("deposit");
+                                    } else {
+                                      setWithdrawInput(String(entry.amount));
+                                      setCashierTab("withdraw");
+                                    }
+                                  }}
+                                >
+                                  Retry
+                                </button>
+                              ) : null}
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                  </div>
+                ) : null}
+              </>
+            )}
+          </dialog>
+        </div>
+      ) : null}
+    </>
   );
 }

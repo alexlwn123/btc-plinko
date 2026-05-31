@@ -81,18 +81,18 @@ This plan turns the current Plinko demo into an account-based casino game using 
 
 ## Phase 4: Cashier UI And Fake Funding Flows
 
-- [ ] Add a cashier modal or drawer.
-- [ ] Add Deposit and Withdraw tabs.
-- [ ] Add a cashier transaction history view.
-- [ ] Add deposit status states: pending, completed, failed, canceled.
-- [ ] Add withdrawal status states: pending, completed, failed, canceled.
-- [ ] Build a fake deposit flow that creates a deposit status in Convex.
-- [ ] Add a development-only way to mark a fake deposit successful.
-- [ ] Credit the wallet exactly once when a fake deposit succeeds.
-- [ ] Build a fake withdrawal flow that checks available balance.
-- [ ] Place withdrawal funds into a pending state.
-- [ ] Finalize or release pending withdrawal funds based on fake withdrawal result.
-- [ ] Show clear loading, pending, failed, and retry states.
+- [x] Add a cashier modal or drawer.
+- [x] Add Deposit and Withdraw tabs.
+- [x] Add a cashier transaction history view.
+- [x] Add deposit status states: pending, completed, failed, canceled.
+- [x] Add withdrawal status states: pending, completed, failed, canceled.
+- [x] Build a fake deposit flow that creates a deposit status in Convex.
+- [x] Add a development-only way to mark a fake deposit successful.
+- [x] Credit the wallet exactly once when a fake deposit succeeds.
+- [x] Build a fake withdrawal flow that checks available balance.
+- [x] Place withdrawal funds into a pending state.
+- [x] Finalize or release pending withdrawal funds based on fake withdrawal result.
+- [x] Show clear loading, pending, failed, and retry states.
 
 ## Phase 5: Server-Side Plinko Settlement
 

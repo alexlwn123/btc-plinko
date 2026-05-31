@@ -8,6 +8,8 @@
  * @module
  */
 
+import type * as cashier from "../cashier.js";
+import type * as cashierCore from "../cashierCore.js";
 import type * as users from "../users.js";
 import type * as walletCore from "../walletCore.js";
 import type * as wallets from "../wallets.js";
@@ -19,6 +21,8 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  cashier: typeof cashier;
+  cashierCore: typeof cashierCore;
   users: typeof users;
   walletCore: typeof walletCore;
   wallets: typeof wallets;

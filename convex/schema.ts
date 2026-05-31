@@ -96,6 +96,47 @@ export default defineSchema({
     .index("by_user_created_at", ["userId", "createdAt"])
     .index("by_user_idempotency", ["userId", "idempotencyKey"])
     .index("by_user_source_kind", ["userId", "sourceType", "sourceId", "kind"]),
+  deposits: defineTable({
+    amount: v.number(),
+    canceledAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    failedAt: v.optional(v.number()),
+    idempotencyKey: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("completed"),
+      v.literal("failed"),
+      v.literal("canceled"),
+    ),
+    updatedAt: v.number(),
+    userId: v.id("users"),
+    walletEventId: v.optional(v.id("walletEvents")),
+  })
+    .index("by_user_created_at", ["userId", "createdAt"])
+    .index("by_user_idempotency", ["userId", "idempotencyKey"])
+    .index("by_user_status", ["userId", "status"]),
+  withdrawals: defineTable({
+    amount: v.number(),
+    canceledAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    failedAt: v.optional(v.number()),
+    holdEventId: v.optional(v.id("walletEvents")),
+    idempotencyKey: v.string(),
+    resultEventId: v.optional(v.id("walletEvents")),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("completed"),
+      v.literal("failed"),
+      v.literal("canceled"),
+    ),
+    updatedAt: v.number(),
+    userId: v.id("users"),
+  })
+    .index("by_user_created_at", ["userId", "createdAt"])
+    .index("by_user_idempotency", ["userId", "idempotencyKey"])
+    .index("by_user_status", ["userId", "status"]),
   gameRounds: defineTable({
     betAmount: v.number(),
     payoutAmount: v.optional(v.number()),

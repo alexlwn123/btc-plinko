@@ -22,7 +22,7 @@ type WalletSourceType = Doc<"walletEvents">["sourceType"];
 type WalletStatus = Doc<"walletEvents">["status"];
 type WalletDoc = Doc<"wallets">;
 
-function serializeWallet(wallet: WalletDoc | null) {
+export function serializeWallet(wallet: WalletDoc | null) {
   return {
     availableBalance: wallet?.availableBalance ?? 0,
     heldBalance: wallet?.heldBalance ?? 0,
@@ -31,7 +31,7 @@ function serializeWallet(wallet: WalletDoc | null) {
   };
 }
 
-function serializeWalletEvent(event: Doc<"walletEvents">) {
+export function serializeWalletEvent(event: Doc<"walletEvents">) {
   return {
     amount: event.amount,
     availableBalanceAfter: event.availableBalanceAfter,
@@ -47,7 +47,7 @@ function serializeWalletEvent(event: Doc<"walletEvents">) {
   };
 }
 
-async function getWalletByUser(ctx: QueryCtx | MutationCtx, userId: Id<"users">) {
+export async function getWalletByUser(ctx: QueryCtx | MutationCtx, userId: Id<"users">) {
   return await ctx.db
     .query("wallets")
     .withIndex("by_user", (q) => q.eq("userId", userId))
@@ -96,7 +96,7 @@ async function getDuplicateEvent(
   );
 }
 
-async function ensureWalletForUser(ctx: MutationCtx, userId: Id<"users">, now = Date.now()) {
+export async function ensureWalletForUser(ctx: MutationCtx, userId: Id<"users">, now = Date.now()) {
   const existing = await getWalletByUser(ctx, userId);
 
   if (existing) {
@@ -223,6 +223,51 @@ export const ensureWallet = mutation({
   },
 });
 
+export async function creditDepositForUser(
+  ctx: MutationCtx,
+  {
+    amount,
+    depositId,
+    idempotencyKey,
+    userId,
+  }: {
+    amount: number;
+    depositId: string;
+    idempotencyKey?: string;
+    userId: Id<"users">;
+  },
+) {
+  const kind = "deposit_credit";
+  const key = idempotencyKey ?? idempotencyKeyFor("deposit", depositId, kind);
+  const duplicate = await getDuplicateEvent(ctx, userId, key, "deposit", depositId, kind);
+
+  if (duplicate) {
+    return {
+      duplicate: true,
+      eventId: duplicate._id,
+      wallet: serializeWallet(await getWalletByUser(ctx, userId)),
+    };
+  }
+
+  const wallet = await ensureWalletForUser(ctx, userId);
+  const result = await applyWalletEvent(ctx, wallet, {
+    amount,
+    availableDelta: amount,
+    heldDelta: 0,
+    idempotencyKey: key,
+    kind,
+    sourceId: depositId,
+    sourceType: "deposit",
+    status: "completed",
+  });
+
+  return {
+    duplicate: false,
+    eventId: result.eventId,
+    wallet: serializeWallet(result.wallet),
+  };
+}
+
 export const creditDeposit = internalMutation({
   args: {
     amount: v.number(),
@@ -230,38 +275,55 @@ export const creditDeposit = internalMutation({
     idempotencyKey: v.optional(v.string()),
     userId: v.id("users"),
   },
-  handler: async (ctx, { amount, depositId, idempotencyKey, userId }) => {
-    const kind = "deposit_credit";
-    const key = idempotencyKey ?? idempotencyKeyFor("deposit", depositId, kind);
-    const duplicate = await getDuplicateEvent(ctx, userId, key, "deposit", depositId, kind);
-
-    if (duplicate) {
-      return {
-        duplicate: true,
-        eventId: duplicate._id,
-        wallet: serializeWallet(await getWalletByUser(ctx, userId)),
-      };
-    }
-
-    const wallet = await ensureWalletForUser(ctx, userId);
-    const result = await applyWalletEvent(ctx, wallet, {
-      amount,
-      availableDelta: amount,
-      heldDelta: 0,
-      idempotencyKey: key,
-      kind,
-      sourceId: depositId,
-      sourceType: "deposit",
-      status: "completed",
-    });
-
-    return {
-      duplicate: false,
-      eventId: result.eventId,
-      wallet: serializeWallet(result.wallet),
-    };
+  handler: async (ctx, args) => {
+    return await creditDepositForUser(ctx, args);
   },
 });
+
+export async function reserveWithdrawalForUser(
+  ctx: MutationCtx,
+  {
+    amount,
+    idempotencyKey,
+    userId,
+    withdrawalId,
+  }: {
+    amount: number;
+    idempotencyKey?: string;
+    userId: Id<"users">;
+    withdrawalId: string;
+  },
+) {
+  const kind = "withdrawal_hold";
+  const key = idempotencyKey ?? idempotencyKeyFor("withdrawal", withdrawalId, kind);
+  const duplicate = await getDuplicateEvent(ctx, userId, key, "withdrawal", withdrawalId, kind);
+
+  if (duplicate) {
+    return {
+      duplicate: true,
+      eventId: duplicate._id,
+      wallet: serializeWallet(await getWalletByUser(ctx, userId)),
+    };
+  }
+
+  const wallet = await ensureWalletForUser(ctx, userId);
+  const result = await applyWalletEvent(ctx, wallet, {
+    amount,
+    availableDelta: -amount,
+    heldDelta: amount,
+    idempotencyKey: key,
+    kind,
+    sourceId: withdrawalId,
+    sourceType: "withdrawal",
+    status: "pending",
+  });
+
+  return {
+    duplicate: false,
+    eventId: result.eventId,
+    wallet: serializeWallet(result.wallet),
+  };
+}
 
 export const reserveWithdrawal = internalMutation({
   args: {
@@ -270,38 +332,77 @@ export const reserveWithdrawal = internalMutation({
     userId: v.id("users"),
     withdrawalId: v.string(),
   },
-  handler: async (ctx, { amount, idempotencyKey, userId, withdrawalId }) => {
-    const kind = "withdrawal_hold";
-    const key = idempotencyKey ?? idempotencyKeyFor("withdrawal", withdrawalId, kind);
-    const duplicate = await getDuplicateEvent(ctx, userId, key, "withdrawal", withdrawalId, kind);
-
-    if (duplicate) {
-      return {
-        duplicate: true,
-        eventId: duplicate._id,
-        wallet: serializeWallet(await getWalletByUser(ctx, userId)),
-      };
-    }
-
-    const wallet = await ensureWalletForUser(ctx, userId);
-    const result = await applyWalletEvent(ctx, wallet, {
-      amount,
-      availableDelta: -amount,
-      heldDelta: amount,
-      idempotencyKey: key,
-      kind,
-      sourceId: withdrawalId,
-      sourceType: "withdrawal",
-      status: "pending",
-    });
-
-    return {
-      duplicate: false,
-      eventId: result.eventId,
-      wallet: serializeWallet(result.wallet),
-    };
+  handler: async (ctx, args) => {
+    return await reserveWithdrawalForUser(ctx, args);
   },
 });
+
+export async function captureWithdrawalForUser(
+  ctx: MutationCtx,
+  {
+    idempotencyKey,
+    userId,
+    withdrawalId,
+  }: {
+    idempotencyKey?: string;
+    userId: Id<"users">;
+    withdrawalId: string;
+  },
+) {
+  const hold = await getEventBySourceKind(
+    ctx,
+    userId,
+    "withdrawal",
+    withdrawalId,
+    "withdrawal_hold",
+  );
+
+  if (!hold) {
+    throw new Error("Withdrawal hold was not found.");
+  }
+
+  const existingRelease = await getEventBySourceKind(
+    ctx,
+    userId,
+    "withdrawal",
+    withdrawalId,
+    "withdrawal_release",
+  );
+
+  if (existingRelease) {
+    throw new Error("Withdrawal has already been released.");
+  }
+
+  const kind = "withdrawal_capture";
+  const key = idempotencyKey ?? idempotencyKeyFor("withdrawal", withdrawalId, kind);
+  const duplicate = await getDuplicateEvent(ctx, userId, key, "withdrawal", withdrawalId, kind);
+
+  if (duplicate) {
+    return {
+      duplicate: true,
+      eventId: duplicate._id,
+      wallet: serializeWallet(await getWalletByUser(ctx, userId)),
+    };
+  }
+
+  const wallet = await ensureWalletForUser(ctx, userId);
+  const result = await applyWalletEvent(ctx, wallet, {
+    amount: hold.amount,
+    availableDelta: 0,
+    heldDelta: -hold.amount,
+    idempotencyKey: key,
+    kind,
+    sourceId: withdrawalId,
+    sourceType: "withdrawal",
+    status: "completed",
+  });
+
+  return {
+    duplicate: false,
+    eventId: result.eventId,
+    wallet: serializeWallet(result.wallet),
+  };
+}
 
 export const captureWithdrawal = internalMutation({
   args: {
@@ -309,62 +410,79 @@ export const captureWithdrawal = internalMutation({
     userId: v.id("users"),
     withdrawalId: v.string(),
   },
-  handler: async (ctx, { idempotencyKey, userId, withdrawalId }) => {
-    const hold = await getEventBySourceKind(
-      ctx,
-      userId,
-      "withdrawal",
-      withdrawalId,
-      "withdrawal_hold",
-    );
-
-    if (!hold) {
-      throw new Error("Withdrawal hold was not found.");
-    }
-
-    const existingRelease = await getEventBySourceKind(
-      ctx,
-      userId,
-      "withdrawal",
-      withdrawalId,
-      "withdrawal_release",
-    );
-
-    if (existingRelease) {
-      throw new Error("Withdrawal has already been released.");
-    }
-
-    const kind = "withdrawal_capture";
-    const key = idempotencyKey ?? idempotencyKeyFor("withdrawal", withdrawalId, kind);
-    const duplicate = await getDuplicateEvent(ctx, userId, key, "withdrawal", withdrawalId, kind);
-
-    if (duplicate) {
-      return {
-        duplicate: true,
-        eventId: duplicate._id,
-        wallet: serializeWallet(await getWalletByUser(ctx, userId)),
-      };
-    }
-
-    const wallet = await ensureWalletForUser(ctx, userId);
-    const result = await applyWalletEvent(ctx, wallet, {
-      amount: hold.amount,
-      availableDelta: 0,
-      heldDelta: -hold.amount,
-      idempotencyKey: key,
-      kind,
-      sourceId: withdrawalId,
-      sourceType: "withdrawal",
-      status: "completed",
-    });
-
-    return {
-      duplicate: false,
-      eventId: result.eventId,
-      wallet: serializeWallet(result.wallet),
-    };
+  handler: async (ctx, args) => {
+    return await captureWithdrawalForUser(ctx, args);
   },
 });
+
+export async function releaseWithdrawalForUser(
+  ctx: MutationCtx,
+  {
+    idempotencyKey,
+    status = "canceled",
+    userId,
+    withdrawalId,
+  }: {
+    idempotencyKey?: string;
+    status?: Extract<WalletStatus, "failed" | "canceled">;
+    userId: Id<"users">;
+    withdrawalId: string;
+  },
+) {
+  const hold = await getEventBySourceKind(
+    ctx,
+    userId,
+    "withdrawal",
+    withdrawalId,
+    "withdrawal_hold",
+  );
+
+  if (!hold) {
+    throw new Error("Withdrawal hold was not found.");
+  }
+
+  const existingCapture = await getEventBySourceKind(
+    ctx,
+    userId,
+    "withdrawal",
+    withdrawalId,
+    "withdrawal_capture",
+  );
+
+  if (existingCapture) {
+    throw new Error("Withdrawal has already been captured.");
+  }
+
+  const kind = "withdrawal_release";
+  const key = idempotencyKey ?? idempotencyKeyFor("withdrawal", withdrawalId, kind);
+  const duplicate = await getDuplicateEvent(ctx, userId, key, "withdrawal", withdrawalId, kind);
+
+  if (duplicate) {
+    return {
+      duplicate: true,
+      eventId: duplicate._id,
+      wallet: serializeWallet(await getWalletByUser(ctx, userId)),
+    };
+  }
+
+  const wallet = await ensureWalletForUser(ctx, userId);
+  const result = await applyWalletEvent(ctx, wallet, {
+    amount: hold.amount,
+    availableDelta: hold.amount,
+    heldDelta: -hold.amount,
+    idempotencyKey: key,
+    kind,
+    sourceId: withdrawalId,
+    sourceType: "withdrawal",
+    status,
+  });
+
+  return {
+    duplicate: false,
+    eventId: result.eventId,
+    wallet: serializeWallet(result.wallet),
+  };
+}
 
 export const releaseWithdrawal = internalMutation({
   args: {
@@ -372,60 +490,8 @@ export const releaseWithdrawal = internalMutation({
     userId: v.id("users"),
     withdrawalId: v.string(),
   },
-  handler: async (ctx, { idempotencyKey, userId, withdrawalId }) => {
-    const hold = await getEventBySourceKind(
-      ctx,
-      userId,
-      "withdrawal",
-      withdrawalId,
-      "withdrawal_hold",
-    );
-
-    if (!hold) {
-      throw new Error("Withdrawal hold was not found.");
-    }
-
-    const existingCapture = await getEventBySourceKind(
-      ctx,
-      userId,
-      "withdrawal",
-      withdrawalId,
-      "withdrawal_capture",
-    );
-
-    if (existingCapture) {
-      throw new Error("Withdrawal has already been captured.");
-    }
-
-    const kind = "withdrawal_release";
-    const key = idempotencyKey ?? idempotencyKeyFor("withdrawal", withdrawalId, kind);
-    const duplicate = await getDuplicateEvent(ctx, userId, key, "withdrawal", withdrawalId, kind);
-
-    if (duplicate) {
-      return {
-        duplicate: true,
-        eventId: duplicate._id,
-        wallet: serializeWallet(await getWalletByUser(ctx, userId)),
-      };
-    }
-
-    const wallet = await ensureWalletForUser(ctx, userId);
-    const result = await applyWalletEvent(ctx, wallet, {
-      amount: hold.amount,
-      availableDelta: hold.amount,
-      heldDelta: -hold.amount,
-      idempotencyKey: key,
-      kind,
-      sourceId: withdrawalId,
-      sourceType: "withdrawal",
-      status: "canceled",
-    });
-
-    return {
-      duplicate: false,
-      eventId: result.eventId,
-      wallet: serializeWallet(result.wallet),
-    };
+  handler: async (ctx, args) => {
+    return await releaseWithdrawalForUser(ctx, args);
   },
 });
 
