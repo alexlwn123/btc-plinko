@@ -96,17 +96,17 @@ This plan turns the current Plinko demo into an account-based casino game using 
 
 ## Phase 5: Server-Side Plinko Settlement
 
-- [ ] Replace local bet and payout balance changes with Convex mutations.
-- [ ] Send bet amount, rows, risk, and client seed to Convex.
-- [ ] Validate the user, wallet state, bet amount, rows, and risk in Convex.
-- [ ] Record the bet.
-- [ ] Generate or settle the Plinko result in Convex.
-- [ ] Record the game round result.
-- [ ] Record the payout.
-- [ ] Return the result path to the client.
-- [ ] Keep the Plinko animation client-side after receiving the backend result.
-- [ ] Keep the current provably fair display, but make the backend own seed, nonce, and result data.
-- [ ] Ensure a game round can be replayed or inspected from saved data.
+- [x] Replace local bet and payout balance changes with Convex mutations.
+- [x] Send bet amount, rows, risk, and client seed to Convex.
+- [x] Validate the user, wallet state, bet amount, rows, and risk in Convex.
+- [x] Record the bet.
+- [x] Generate or settle the Plinko result in Convex.
+- [x] Record the game round result.
+- [x] Record the payout.
+- [x] Return the result path to the client.
+- [x] Keep the Plinko animation client-side after receiving the backend result.
+- [x] Keep the current provably fair display, but make the backend own seed, nonce, and result data.
+- [x] Ensure a game round can be replayed or inspected from saved data.
 
 ## Phase 6: Player-Facing Frontend Integration
 

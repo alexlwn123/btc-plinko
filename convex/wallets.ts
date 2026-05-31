@@ -495,6 +495,78 @@ export const releaseWithdrawal = internalMutation({
   },
 });
 
+export async function settleBetForUser(
+  ctx: MutationCtx,
+  {
+    betAmount,
+    betId,
+    idempotencyKey,
+    payoutAmount,
+    userId,
+  }: {
+    betAmount: number;
+    betId: string;
+    idempotencyKey?: string;
+    payoutAmount: number;
+    userId: Id<"users">;
+  },
+) {
+  assertPositiveWalletAmount(betAmount);
+
+  if (payoutAmount < 0) {
+    throw new Error("Payout cannot be negative.");
+  }
+
+  const kind = "bet_debit";
+  const key = idempotencyKey ?? idempotencyKeyFor("bet", betId, kind);
+  const duplicate = await getDuplicateEvent(ctx, userId, key, "bet", betId, kind);
+
+  if (duplicate) {
+    return {
+      betEventId: duplicate._id,
+      duplicate: true,
+      payoutEventId: (await getEventBySourceKind(ctx, userId, "bet", betId, "payout_credit"))?._id,
+      wallet: serializeWallet(await getWalletByUser(ctx, userId)),
+    };
+  }
+
+  let wallet = await ensureWalletForUser(ctx, userId);
+  const debit = await applyWalletEvent(ctx, wallet, {
+    amount: betAmount,
+    availableDelta: -betAmount,
+    heldDelta: 0,
+    idempotencyKey: key,
+    kind,
+    sourceId: betId,
+    sourceType: "bet",
+    status: "completed",
+  });
+  wallet = debit.wallet;
+  let payoutEventId: Id<"walletEvents"> | undefined;
+
+  if (payoutAmount > 0) {
+    const payout = await applyWalletEvent(ctx, wallet, {
+      amount: payoutAmount,
+      availableDelta: payoutAmount,
+      heldDelta: 0,
+      idempotencyKey: idempotencyKeyFor("bet", betId, "payout_credit"),
+      kind: "payout_credit",
+      sourceId: betId,
+      sourceType: "bet",
+      status: "completed",
+    });
+    wallet = payout.wallet;
+    payoutEventId = payout.eventId;
+  }
+
+  return {
+    betEventId: debit.eventId,
+    duplicate: false,
+    payoutEventId,
+    wallet: serializeWallet(wallet),
+  };
+}
+
 export const settleBet = internalMutation({
   args: {
     betAmount: v.number(),
@@ -503,57 +575,8 @@ export const settleBet = internalMutation({
     payoutAmount: v.number(),
     userId: v.id("users"),
   },
-  handler: async (ctx, { betAmount, betId, idempotencyKey, payoutAmount, userId }) => {
-    assertPositiveWalletAmount(betAmount);
-
-    if (payoutAmount < 0) {
-      throw new Error("Payout cannot be negative.");
-    }
-
-    const kind = "bet_debit";
-    const key = idempotencyKey ?? idempotencyKeyFor("bet", betId, kind);
-    const duplicate = await getDuplicateEvent(ctx, userId, key, "bet", betId, kind);
-
-    if (duplicate) {
-      return {
-        duplicate: true,
-        eventId: duplicate._id,
-        wallet: serializeWallet(await getWalletByUser(ctx, userId)),
-      };
-    }
-
-    let wallet = await ensureWalletForUser(ctx, userId);
-    const debit = await applyWalletEvent(ctx, wallet, {
-      amount: betAmount,
-      availableDelta: -betAmount,
-      heldDelta: 0,
-      idempotencyKey: key,
-      kind,
-      sourceId: betId,
-      sourceType: "bet",
-      status: "completed",
-    });
-    wallet = debit.wallet;
-
-    if (payoutAmount > 0) {
-      const payout = await applyWalletEvent(ctx, wallet, {
-        amount: payoutAmount,
-        availableDelta: payoutAmount,
-        heldDelta: 0,
-        idempotencyKey: idempotencyKeyFor("bet", betId, "payout_credit"),
-        kind: "payout_credit",
-        sourceId: betId,
-        sourceType: "bet",
-        status: "completed",
-      });
-      wallet = payout.wallet;
-    }
-
-    return {
-      duplicate: false,
-      eventId: debit.eventId,
-      wallet: serializeWallet(wallet),
-    };
+  handler: async (ctx, args) => {
+    return await settleBetForUser(ctx, args);
   },
 });
 

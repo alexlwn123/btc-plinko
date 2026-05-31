@@ -83,6 +83,9 @@ type ActiveBall = {
   commit: ServerCommit;
   clientSeed: string;
   multiplier: number;
+  payoutAmount: number;
+  roundId?: string;
+  settlement: "local" | "server";
   startedAt: number;
   duration: number;
   points: BoardPoint[];
@@ -115,6 +118,8 @@ type GameState = {
   playHistory: PlayHistoryEntry[];
   fairness: FairnessState;
   board: BoardState;
+  serverSettlementReady: boolean;
+  usesServerSettlement: boolean;
 };
 
 type ViewState = {
@@ -144,6 +149,21 @@ type CashierBusy =
   | "withdrawal:fail"
   | "withdrawal:cancel"
   | "retry";
+
+type SettledPlinkoRound = {
+  betAmount: number;
+  clientSeed: string;
+  directions: Array<"L" | "R">;
+  id: string;
+  multiplier: number;
+  nonce: number;
+  payoutAmount: number;
+  points: DropPoint[];
+  rows: number;
+  serverSeed: string;
+  serverSeedHash: string;
+  slot: number;
+};
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -225,26 +245,39 @@ function createInitialGameState(): GameState {
       centerX: 0,
       binTop: 0,
     },
+    serverSettlementReady: true,
+    usesServerSettlement: false,
   };
 }
 
 function snapshot(state: GameState): ViewState {
+  const lastProof = state.fairness.lastProof;
+  const usesServerSettlement = state.usesServerSettlement;
+
   return {
     balance: state.balance,
     betInput: state.betInput,
     rows: state.rows,
     risk: state.risk,
     isSettingsLocked: state.activeBalls.length + state.pendingDrops > 0,
-    isDropDisabled: !state.fairness.currentCommit,
+    isDropDisabled:
+      state.pendingDrops > 0 ||
+      (usesServerSettlement ? !state.serverSettlementReady : !state.fairness.currentCommit),
     playHistory: [...state.playHistory],
     clientSeed: state.fairness.clientSeed,
-    serverHash: state.fairness.currentCommit?.serverSeedHash ?? "Preparing...",
-    fairNonce: state.fairness.currentCommit
-      ? `Nonce ${state.fairness.currentCommit.nonce}`
-      : "Nonce -",
-    revealedSeed: state.fairness.lastProof?.serverSeed ?? "Awaiting result",
-    proofResult: state.fairness.lastProof
-      ? `Nonce ${state.fairness.lastProof.nonce} / slot ${state.fairness.lastProof.slot} / ${state.fairness.lastProof.multiplier}x`
+    serverHash: usesServerSettlement
+      ? (lastProof?.serverSeedHash ?? "Server generated on drop")
+      : (state.fairness.currentCommit?.serverSeedHash ?? "Preparing..."),
+    fairNonce: usesServerSettlement
+      ? lastProof
+        ? `Nonce ${lastProof.nonce}`
+        : "Nonce -"
+      : state.fairness.currentCommit
+        ? `Nonce ${state.fairness.currentCommit.nonce}`
+        : "Nonce -",
+    revealedSeed: lastProof?.serverSeed ?? "Awaiting result",
+    proofResult: lastProof
+      ? `Nonce ${lastProof.nonce} / slot ${lastProof.slot} / ${lastProof.multiplier}x`
       : "-",
   };
 }
@@ -281,6 +314,14 @@ function newCashierRequestId(kind: "deposit" | "withdrawal") {
   }
 
   return `${kind}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function newPlinkoRequestId() {
+  if ("randomUUID" in crypto) {
+    return `plinko-${crypto.randomUUID()}`;
+  }
+
+  return `plinko-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function formatCashierDate(timestamp: number) {
@@ -349,6 +390,7 @@ export function App() {
   const [withdrawInput, setWithdrawInput] = useState(DEFAULT_WITHDRAW_AMOUNT);
   const [cashierBusy, setCashierBusy] = useState<CashierBusy | null>(null);
   const [cashierError, setCashierError] = useState<string | null>(null);
+  const [gameError, setGameError] = useState<string | null>(null);
   const [view, setView] = useState(() => snapshot(gameRef.current));
   const beginPasskeyRegistration = useMutation(api.users.beginPasskeyRegistration);
   const verifyPasskeyRegistration = useMutation(api.users.verifyPasskeyRegistration);
@@ -364,6 +406,7 @@ export function App() {
   const completeFakeWithdrawal = useMutation(api.cashier.completeFakeWithdrawal);
   const failFakeWithdrawal = useMutation(api.cashier.failFakeWithdrawal);
   const cancelFakeWithdrawal = useMutation(api.cashier.cancelFakeWithdrawal);
+  const settlePlinkoDrop = useMutation(api.plinko.settleDrop);
   const profile = useQuery(api.users.getSessionUser, sessionToken ? { sessionToken } : "skip");
   const cashier = useQuery(api.cashier.getCashier, sessionToken ? { sessionToken } : "skip");
   const accountProfile = isDevSignedIn ? DEV_PROFILE : profile;
@@ -381,6 +424,7 @@ export function App() {
           ? "Signing out"
           : null;
   const authPanelStatus = authBusyLabel ?? profileStatus;
+  const hasCashierWallet = Boolean(cashier?.wallet);
   const walletAvailable = cashier?.wallet.availableBalance ?? 0;
   const walletHeld = cashier?.wallet.heldBalance ?? 0;
   const walletStatus = sessionToken ? (cashier ? "Ready" : "Syncing") : "Passkey required";
@@ -511,6 +555,15 @@ export function App() {
     end.y = gameRef.current.board.binTop - 18;
     points.push(end);
     return points;
+  }
+
+  function dropFromSettledRound(round: SettledPlinkoRound): Drop {
+    return {
+      directions: [...round.directions],
+      points: round.points.map((point) => ({ ...point })),
+      rows: round.rows,
+      slot: round.slot,
+    };
   }
 
   function resizeCanvas() {
@@ -742,9 +795,11 @@ export function App() {
     state.activeBalls = state.activeBalls.filter((ball) => !finishedIds.has(ball.id));
 
     for (const ball of finishedBalls) {
-      const win = Math.floor(ball.bet * ball.multiplier);
+      const win = ball.payoutAmount;
 
-      state.balance += win;
+      if (ball.settlement === "local") {
+        state.balance += win;
+      }
       recordPayout(ball, win);
       state.lastWin = win;
       state.lastMultiplier = ball.multiplier;
@@ -772,6 +827,69 @@ export function App() {
       return;
     }
 
+    if (state.usesServerSettlement) {
+      if (!sessionToken) {
+        setGameError("Sign in with a passkey account to play.");
+        return;
+      }
+
+      const rows = state.rows;
+      const risk = state.risk;
+      const clientSeed = currentClientSeed();
+
+      state.pendingDrops += 1;
+      state.lastPath = [];
+      state.lastSlot = null;
+      state.lastWin = 0;
+      state.lastMultiplier = 0;
+      setGameError(null);
+      publish();
+
+      try {
+        const result = await settlePlinkoDrop({
+          betAmount: bet,
+          clientSeed,
+          requestId: newPlinkoRequestId(),
+          risk,
+          rows,
+          sessionToken,
+        });
+        const round = result.round as SettledPlinkoRound;
+        const drop = dropFromSettledRound(round);
+
+        state.balance = result.wallet.availableBalance;
+        state.lastPath = [...drop.directions];
+        state.activeBalls.push({
+          bet,
+          clientSeed: round.clientSeed,
+          commit: {
+            nonce: round.nonce,
+            serverSeed: round.serverSeed,
+            serverSeedHash: round.serverSeedHash,
+          },
+          drop,
+          duration: 580 + round.rows * 165,
+          id: state.nextBallId,
+          multiplier: round.multiplier,
+          payoutAmount: round.payoutAmount,
+          points: dropPathPoints(drop),
+          progress: 0,
+          roundId: round.id,
+          settlement: "server",
+          startedAt: performance.now(),
+        });
+        state.nextBallId += 1;
+        scheduleAnimation();
+      } catch (error) {
+        setGameError(error instanceof Error ? error.message : "Plinko settlement failed.");
+      } finally {
+        state.pendingDrops -= 1;
+        publish();
+      }
+
+      return;
+    }
+
     const commit = consumeCommit();
     if (!commit) return;
 
@@ -784,6 +902,7 @@ export function App() {
     state.lastSlot = null;
     state.lastWin = 0;
     state.lastMultiplier = 0;
+    setGameError(null);
     publish();
 
     try {
@@ -796,16 +915,18 @@ export function App() {
 
       state.lastPath = [...drop.directions];
       state.activeBalls.push({
-        id: state.nextBallId,
         bet,
-        drop,
-        commit,
         clientSeed,
-        multiplier: multipliers[drop.slot],
-        startedAt: performance.now(),
+        commit,
+        drop,
         duration: 580 + rows * 165,
+        id: state.nextBallId,
+        multiplier: multipliers[drop.slot],
+        payoutAmount: Math.floor(bet * multipliers[drop.slot]),
         points: dropPathPoints(drop),
         progress: 0,
+        settlement: "local",
+        startedAt: performance.now(),
       });
       state.nextBallId += 1;
       scheduleAnimation();
@@ -1043,6 +1164,22 @@ export function App() {
       setAuthError(error instanceof Error ? error.message : "Wallet setup failed.");
     });
   }, [ensureWallet, profile, sessionToken]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: publish snapshots mutable game state after wallet/session changes.
+  useEffect(() => {
+    const state = gameRef.current;
+    const usesServerSettlement = Boolean(sessionToken && profile);
+    const walletReady = !usesServerSettlement || hasCashierWallet;
+
+    state.usesServerSettlement = usesServerSettlement;
+    state.serverSettlementReady = walletReady;
+
+    if (usesServerSettlement && hasCashierWallet) {
+      state.balance = walletAvailable;
+    }
+
+    publish();
+  }, [hasCashierWallet, profile, sessionToken, walletAvailable]);
 
   useEffect(() => {
     if (!isCashierOpen) return;
@@ -1293,6 +1430,11 @@ export function App() {
                 >
                   Drop
                 </button>
+                {gameError ? (
+                  <div className="game-alert" role="alert">
+                    {gameError}
+                  </div>
+                ) : null}
               </div>
 
               <div className="history-panel" aria-label="Play history">

@@ -139,10 +139,35 @@ export default defineSchema({
     .index("by_user_status", ["userId", "status"]),
   gameRounds: defineTable({
     betAmount: v.number(),
-    payoutAmount: v.optional(v.number()),
-    risk: v.string(),
+    betEventId: v.optional(v.id("walletEvents")),
+    clientSeed: v.string(),
+    completedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    directions: v.array(v.union(v.literal("L"), v.literal("R"))),
+    idempotencyKey: v.string(),
+    multiplier: v.number(),
+    nonce: v.number(),
+    payoutAmount: v.number(),
+    payoutEventId: v.optional(v.id("walletEvents")),
+    points: v.array(
+      v.object({
+        layer: v.number(),
+        rights: v.number(),
+        slot: v.number(),
+      }),
+    ),
+    risk: v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
+    rowHashes: v.array(v.string()),
     rows: v.number(),
-    status: v.string(),
+    serverSeed: v.string(),
+    serverSeedHash: v.string(),
+    slot: v.number(),
+    status: v.union(v.literal("settling"), v.literal("completed"), v.literal("failed")),
+    updatedAt: v.number(),
     userId: v.id("users"),
-  }).index("by_user", ["userId"]),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_created_at", ["userId", "createdAt"])
+    .index("by_user_idempotency", ["userId", "idempotencyKey"])
+    .index("by_user_nonce", ["userId", "nonce"]),
 });

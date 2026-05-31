@@ -8,6 +8,7 @@ import {
   ensureWalletForUser,
   releaseWithdrawalForUser,
   reserveWithdrawalForUser,
+  settleBetForUser,
 } from "../convex/wallets";
 
 type StoredDoc = {
@@ -282,5 +283,57 @@ describe("wallet mutations", () => {
     expect(
       db.rows("walletEvents").filter((event) => event.kind === "withdrawal_hold"),
     ).toHaveLength(0);
+  });
+
+  it("settles bet debits and payout credits idempotently", async () => {
+    const db = createDbMock();
+
+    const settled = await settleBetForUser(mutationCtx(db), {
+      betAmount: 100,
+      betId: "round-1",
+      idempotencyKey: "round-1:bet",
+      payoutAmount: 230,
+      userId,
+    });
+    const duplicate = await settleBetForUser(mutationCtx(db), {
+      betAmount: 100,
+      betId: "round-1",
+      idempotencyKey: "round-1:retry",
+      payoutAmount: 230,
+      userId,
+    });
+
+    expect(settled.duplicate).toBe(false);
+    expect(duplicate.duplicate).toBe(true);
+    expect(duplicate.betEventId).toBe(settled.betEventId);
+    expect(duplicate.payoutEventId).toBe(settled.payoutEventId);
+    expect(db.rows("wallets")[0]).toMatchObject({
+      availableBalance: INITIAL_PLAYABLE_BALANCE_SATS + 130,
+      heldBalance: 0,
+    });
+    expect(db.rows("walletEvents").map((event) => event.kind)).toEqual([
+      "manual_adjustment",
+      "bet_debit",
+      "payout_credit",
+    ]);
+  });
+
+  it("rejects bet settlement that exceeds the available balance", async () => {
+    const db = createDbMock();
+
+    await expect(
+      settleBetForUser(mutationCtx(db), {
+        betAmount: INITIAL_PLAYABLE_BALANCE_SATS + 1,
+        betId: "round-2",
+        idempotencyKey: "round-2:bet",
+        payoutAmount: 0,
+        userId,
+      }),
+    ).rejects.toThrow("Wallet amounts must be non-negative safe integers in sats.");
+    expect(db.rows("wallets")[0]).toMatchObject({
+      availableBalance: INITIAL_PLAYABLE_BALANCE_SATS,
+      heldBalance: 0,
+    });
+    expect(db.rows("walletEvents").map((event) => event.kind)).toEqual(["manual_adjustment"]);
   });
 });

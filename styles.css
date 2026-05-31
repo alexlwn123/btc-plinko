@@ -490,6 +490,17 @@ input[type="range"] {
   font-weight: 900;
 }
 
+.game-alert {
+  padding: 10px 12px;
+  border: 1px solid rgba(243, 91, 91, 0.36);
+  border-radius: 8px;
+  color: #ffd7d7;
+  background: rgba(243, 91, 91, 0.1);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .history-panel {
   display: grid;
   gap: 12px;
@@ -1051,7 +1062,8 @@ input[type="range"] {
     display: grid;
     grid-template-areas:
       "bet drop"
-      "rows risk";
+      "rows risk"
+      "alert alert";
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 10px;
     padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
@@ -1087,6 +1099,12 @@ input[type="range"] {
     grid-area: drop;
     align-self: end;
     min-height: 52px;
+  }
+
+  .is-playing .game-control-group .game-alert {
+    grid-area: alert;
+    padding: 8px 10px;
+    font-size: 0.7rem;
   }
 
   .is-playing .game-control-group .field {

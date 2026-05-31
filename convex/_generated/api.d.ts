@@ -10,6 +10,8 @@
 
 import type * as cashier from "../cashier.js";
 import type * as cashierCore from "../cashierCore.js";
+import type * as plinko from "../plinko.js";
+import type * as plinkoCore from "../plinkoCore.js";
 import type * as users from "../users.js";
 import type * as walletCore from "../walletCore.js";
 import type * as wallets from "../wallets.js";
@@ -23,6 +25,8 @@ import type {
 declare const fullApi: ApiFromModules<{
   cashier: typeof cashier;
   cashierCore: typeof cashierCore;
+  plinko: typeof plinko;
+  plinkoCore: typeof plinkoCore;
   users: typeof users;
   walletCore: typeof walletCore;
   wallets: typeof wallets;
