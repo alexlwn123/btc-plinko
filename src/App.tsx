@@ -93,7 +93,7 @@ type ActiveBall = {
 };
 
 type PlayHistoryEntry = {
-  id: number;
+  id: number | string;
   bet: number;
   payout: number;
   multiplier: number;
@@ -127,6 +127,9 @@ type ViewState = {
   betInput: string;
   rows: number;
   risk: Risk;
+  betWarning: string | null;
+  dropButtonLabel: string;
+  isBetControlsDisabled: boolean;
   isSettingsLocked: boolean;
   isDropDisabled: boolean;
   playHistory: PlayHistoryEntry[];
@@ -253,15 +256,30 @@ function createInitialGameState(): GameState {
 function snapshot(state: GameState): ViewState {
   const lastProof = state.fairness.lastProof;
   const usesServerSettlement = state.usesServerSettlement;
+  const bet = Number(state.betInput);
+  const roundedBet = Number.isFinite(bet) ? Math.round(bet) : 0;
+  const isBusy = state.activeBalls.length + state.pendingDrops > 0;
+  const hasInvalidBet = !Number.isSafeInteger(roundedBet) || roundedBet <= 0;
+  const hasInsufficientBalance = !hasInvalidBet && roundedBet > state.balance;
+  const isWaitingForServerWallet = usesServerSettlement && !state.serverSettlementReady;
 
   return {
     balance: state.balance,
     betInput: state.betInput,
     rows: state.rows,
     risk: state.risk,
-    isSettingsLocked: state.activeBalls.length + state.pendingDrops > 0,
+    betWarning: hasInvalidBet
+      ? "Enter a whole number of sats."
+      : hasInsufficientBalance
+        ? "Bet exceeds available balance."
+        : null,
+    dropButtonLabel: state.pendingDrops > 0 ? "Settling" : "Drop",
+    isBetControlsDisabled: isBusy || isWaitingForServerWallet,
+    isSettingsLocked: isBusy,
     isDropDisabled:
-      state.pendingDrops > 0 ||
+      isBusy ||
+      hasInvalidBet ||
+      hasInsufficientBalance ||
       (usesServerSettlement ? !state.serverSettlementReady : !state.fairness.currentCommit),
     playHistory: [...state.playHistory],
     clientSeed: state.fairness.clientSeed,
@@ -409,6 +427,10 @@ export function App() {
   const settlePlinkoDrop = useMutation(api.plinko.settleDrop);
   const profile = useQuery(api.users.getSessionUser, sessionToken ? { sessionToken } : "skip");
   const cashier = useQuery(api.cashier.getCashier, sessionToken ? { sessionToken } : "skip");
+  const recentRounds = useQuery(
+    api.plinko.getRecentRounds,
+    sessionToken ? { sessionToken } : "skip",
+  );
   const accountProfile = isDevSignedIn ? DEV_PROFILE : profile;
   const accountLabel = accountProfile?.publicId ?? "Passkey";
   const profileStatus =
@@ -424,10 +446,25 @@ export function App() {
           ? "Signing out"
           : null;
   const authPanelStatus = authBusyLabel ?? profileStatus;
+  const isWalletBacked = Boolean(sessionToken && profile);
   const hasCashierWallet = Boolean(cashier?.wallet);
   const walletAvailable = cashier?.wallet.availableBalance ?? 0;
   const walletHeld = cashier?.wallet.heldBalance ?? 0;
   const walletStatus = sessionToken ? (cashier ? "Ready" : "Syncing") : "Passkey required";
+  const displayBalance = isWalletBacked ? walletAvailable : view.balance;
+  const displayPlayHistory =
+    isWalletBacked && recentRounds
+      ? recentRounds
+          .map((round) => ({
+            bet: round.betAmount,
+            id: round.id,
+            multiplier: round.multiplier,
+            payout: round.payoutAmount,
+            slot: round.slot,
+          }))
+          .slice(0, PLAY_HISTORY_LIMIT)
+      : view.playHistory;
+  const gameNotice = gameError ?? view.betWarning;
   const cashierTransactions = cashier
     ? [...cashier.deposits, ...cashier.withdrawals]
         .sort((left, right) => right.createdAt - left.createdAt)
@@ -823,7 +860,7 @@ export function App() {
     const state = gameRef.current;
     const bet = currentBet();
     if (bet > state.balance) {
-      setBet(state.balance);
+      setGameError("Bet exceeds available balance.");
       return;
     }
 
@@ -1316,14 +1353,18 @@ export function App() {
               <div className="play-ledger" aria-label="Account summary">
                 <div className="ledger-balance">
                   <span>Balance</span>
-                  <strong id="balance">{formatNumber(view.balance, 0)}</strong>
+                  <strong id="balance">{formatNumber(displayBalance, 0)}</strong>
                   <small>Sats</small>
                 </div>
                 <div>
-                  <span>Wallet</span>
+                  <span>Available</span>
                   <strong>
                     {sessionToken ? `${formatNumber(walletAvailable, 0)} sats` : walletStatus}
                   </strong>
+                </div>
+                <div>
+                  <span>Held</span>
+                  <strong>{sessionToken ? `${formatNumber(walletHeld, 0)} sats` : "0 sats"}</strong>
                 </div>
                 <div>
                   <span>Account</span>
@@ -1353,6 +1394,7 @@ export function App() {
                       type="button"
                       id="halfBet"
                       aria-label="Halve bet"
+                      disabled={view.isBetControlsDisabled}
                       onClick={() => setBet(currentBet() / 2)}
                     >
                       1/2
@@ -1364,8 +1406,10 @@ export function App() {
                       step="1"
                       value={view.betInput}
                       inputMode="decimal"
+                      disabled={view.isBetControlsDisabled}
                       onChange={(event) => {
                         gameRef.current.betInput = event.target.value;
+                        setGameError(null);
                         publish();
                       }}
                       onBlur={() => setBet(currentBet())}
@@ -1375,6 +1419,7 @@ export function App() {
                       type="button"
                       id="doubleBet"
                       aria-label="Double bet"
+                      disabled={view.isBetControlsDisabled}
                       onClick={() => setBet(currentBet() * 2)}
                     >
                       2x
@@ -1428,11 +1473,11 @@ export function App() {
                   onKeyDown={handleDropKeyDown}
                   onKeyUp={handleDropKeyUp}
                 >
-                  Drop
+                  {view.dropButtonLabel}
                 </button>
-                {gameError ? (
+                {gameNotice ? (
                   <div className="game-alert" role="alert">
-                    {gameError}
+                    {gameNotice}
                   </div>
                 ) : null}
               </div>
@@ -1443,10 +1488,10 @@ export function App() {
                   <span id="historyCount">Last {PLAY_HISTORY_LIMIT}</span>
                 </div>
                 <ol id="playHistory" className="play-history" aria-live="polite">
-                  {view.playHistory.length === 0 ? (
+                  {displayPlayHistory.length === 0 ? (
                     <li className="history-empty">No payouts yet</li>
                   ) : (
-                    view.playHistory.map((entry) => {
+                    displayPlayHistory.map((entry) => {
                       const multiplier = `${entry.multiplier.toFixed(2)}x`;
                       return (
                         <li
@@ -1554,8 +1599,8 @@ export function App() {
           />
           {isSignedIn ? (
             <div className="board-hud" aria-hidden="true">
-              <span>{formatNumber(view.balance, 0)} sats</span>
-              <span>{profileStatus}</span>
+              <span>{formatNumber(displayBalance, 0)} sats</span>
+              <span>{sessionToken ? `held ${formatNumber(walletHeld, 0)}` : profileStatus}</span>
             </div>
           ) : null}
           {!isSignedIn ? (

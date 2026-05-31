@@ -34,7 +34,7 @@ declare global {
         lastPath: string[];
         lastSlot: number | null;
         playHistory: Array<{
-          id: number;
+          id: number | string;
           bet: number;
           payout: number;
           multiplier: number;

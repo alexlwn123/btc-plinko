@@ -110,14 +110,14 @@ This plan turns the current Plinko demo into an account-based casino game using 
 
 ## Phase 6: Player-Facing Frontend Integration
 
-- [ ] Replace local balance reads with a Convex-backed balance subscription.
-- [ ] Show wallet state globally.
-- [ ] Keep the current play history UI, but back it with Convex data.
-- [ ] Disable betting while wallet state or game settlement is pending.
-- [ ] Handle insufficient balance before a bet is submitted.
-- [ ] Handle failed settlement without leaving the UI in a stuck state.
-- [ ] Keep row and risk preferences local unless they become account-level settings later.
-- [ ] Make transaction history and play history visually distinct.
+- [x] Replace local balance reads with a Convex-backed balance subscription.
+- [x] Show wallet state globally.
+- [x] Keep the current play history UI, but back it with Convex data.
+- [x] Disable betting while wallet state or game settlement is pending.
+- [x] Handle insufficient balance before a bet is submitted.
+- [x] Handle failed settlement without leaving the UI in a stuck state.
+- [x] Keep row and risk preferences local unless they become account-level settings later.
+- [x] Make transaction history and play history visually distinct.
 
 ## Phase 7: Admin And Support Tools
 
