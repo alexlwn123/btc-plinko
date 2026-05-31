@@ -90,6 +90,103 @@ export const getRecentRounds = query({
   },
 });
 
+export async function settleDropForUser(
+  ctx: MutationCtx,
+  {
+    betAmount,
+    clientSeed,
+    requestId,
+    risk,
+    rows,
+    userId,
+  }: {
+    betAmount: number;
+    clientSeed: string;
+    requestId: string;
+    risk: string;
+    rows: number;
+    userId: Id<"users">;
+  },
+) {
+  assertPlinkoBetAmount(betAmount);
+  buildPlinkoMultipliers(rows, risk);
+
+  const idempotencyKey = plinkoRequestKey(requestId);
+  const existing = await getExistingRound(ctx, userId, idempotencyKey);
+
+  if (existing) {
+    return {
+      duplicate: true,
+      round: serializeRound(existing),
+      wallet: serializeWallet(await getWalletByUser(ctx, userId)),
+    };
+  }
+
+  const normalizedRisk: PlinkoRisk = parsePlinkoRisk(risk);
+  const normalizedClientSeed = normalizeClientSeed(clientSeed);
+  const wallet = await ensureWalletForUser(ctx, userId);
+
+  if (wallet.availableBalance < betAmount) {
+    throw new Error("Insufficient available balance.");
+  }
+
+  const now = Date.now();
+  const nonce = await getNextNonce(ctx, userId);
+  const settled = await settlePlinkoDropCore({
+    betAmount,
+    clientSeed: normalizedClientSeed,
+    nonce,
+    risk: normalizedRisk,
+    rows,
+  });
+  const roundId = await ctx.db.insert("gameRounds", {
+    betAmount,
+    clientSeed: settled.clientSeed,
+    createdAt: now,
+    directions: settled.directions,
+    idempotencyKey,
+    multiplier: settled.multiplier,
+    nonce,
+    payoutAmount: settled.payoutAmount,
+    points: settled.points,
+    risk: settled.risk,
+    rowHashes: settled.rowHashes,
+    rows,
+    serverSeed: settled.serverSeed,
+    serverSeedHash: settled.serverSeedHash,
+    slot: settled.slot,
+    status: "settling",
+    updatedAt: now,
+    userId,
+  });
+  const walletSettlement = await settleBetForUser(ctx, {
+    betAmount,
+    betId: roundId,
+    idempotencyKey: idempotencyKeyFor("bet", roundId, "bet_debit"),
+    payoutAmount: settled.payoutAmount,
+    userId,
+  });
+
+  await ctx.db.patch(roundId, {
+    ...walletEventPatch(walletSettlement),
+    completedAt: now,
+    status: "completed",
+    updatedAt: now,
+  });
+
+  const round = await ctx.db.get(roundId);
+
+  if (!round) {
+    throw new Error("Game round could not be loaded.");
+  }
+
+  return {
+    duplicate: false,
+    round: serializeRound(round),
+    wallet: walletSettlement.wallet,
+  };
+}
+
 export const settleDrop = mutation({
   args: {
     betAmount: v.number(),
@@ -100,83 +197,15 @@ export const settleDrop = mutation({
     sessionToken: v.string(),
   },
   handler: async (ctx, { betAmount, clientSeed, requestId, risk, rows, sessionToken }) => {
-    assertPlinkoBetAmount(betAmount);
-    buildPlinkoMultipliers(rows, risk);
-
     const user = await requireActiveUserBySession(ctx, sessionToken);
-    const idempotencyKey = plinkoRequestKey(requestId);
-    const existing = await getExistingRound(ctx, user._id, idempotencyKey);
 
-    if (existing) {
-      return {
-        duplicate: true,
-        round: serializeRound(existing),
-        wallet: serializeWallet(await getWalletByUser(ctx, user._id)),
-      };
-    }
-
-    const normalizedRisk: PlinkoRisk = parsePlinkoRisk(risk);
-    const normalizedClientSeed = normalizeClientSeed(clientSeed);
-    const wallet = await ensureWalletForUser(ctx, user._id);
-
-    if (wallet.availableBalance < betAmount) {
-      throw new Error("Insufficient available balance.");
-    }
-
-    const now = Date.now();
-    const nonce = await getNextNonce(ctx, user._id);
-    const settled = await settlePlinkoDropCore({
+    return await settleDropForUser(ctx, {
       betAmount,
-      clientSeed: normalizedClientSeed,
-      nonce,
-      risk: normalizedRisk,
+      clientSeed,
+      requestId,
+      risk,
       rows,
-    });
-    const roundId = await ctx.db.insert("gameRounds", {
-      betAmount,
-      clientSeed: settled.clientSeed,
-      createdAt: now,
-      directions: settled.directions,
-      idempotencyKey,
-      multiplier: settled.multiplier,
-      nonce,
-      payoutAmount: settled.payoutAmount,
-      points: settled.points,
-      risk: settled.risk,
-      rowHashes: settled.rowHashes,
-      rows,
-      serverSeed: settled.serverSeed,
-      serverSeedHash: settled.serverSeedHash,
-      slot: settled.slot,
-      status: "settling",
-      updatedAt: now,
       userId: user._id,
     });
-    const walletSettlement = await settleBetForUser(ctx, {
-      betAmount,
-      betId: roundId,
-      idempotencyKey: idempotencyKeyFor("bet", roundId, "bet_debit"),
-      payoutAmount: settled.payoutAmount,
-      userId: user._id,
-    });
-
-    await ctx.db.patch(roundId, {
-      ...walletEventPatch(walletSettlement),
-      completedAt: now,
-      status: "completed",
-      updatedAt: now,
-    });
-
-    const round = await ctx.db.get(roundId);
-
-    if (!round) {
-      throw new Error("Game round could not be loaded.");
-    }
-
-    return {
-      duplicate: false,
-      round: serializeRound(round),
-      wallet: walletSettlement.wallet,
-    };
   },
 });
