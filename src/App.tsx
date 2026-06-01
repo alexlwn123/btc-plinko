@@ -20,6 +20,7 @@ import {
   randomServerSeed,
   verifyProvablyFairDrop,
 } from "./core";
+import { availableForDrop } from "./dropRules";
 import { clearPasskeySession, getSavedPasskeySession, savePasskeySession } from "./passkeySession";
 
 const COMMIT_QUEUE_TARGET = 64;
@@ -112,6 +113,7 @@ type GameState = {
   animationFrame: number | null;
   nextBallId: number;
   pendingDrops: number;
+  pendingServerBetTotal: number;
   lastPath: Array<"L" | "R">;
   lastSlot: number | null;
   lastWin: number;
@@ -121,6 +123,7 @@ type GameState = {
   fairness: FairnessState;
   board: BoardState;
   serverSettlementReady: boolean;
+  latestServerWalletNonce: number;
   usesServerSettlement: boolean;
 };
 
@@ -237,6 +240,7 @@ function createInitialGameState(): GameState {
     animationFrame: null,
     nextBallId: 1,
     pendingDrops: 0,
+    pendingServerBetTotal: 0,
     lastPath: [],
     lastSlot: null,
     lastWin: 0,
@@ -261,8 +265,17 @@ function createInitialGameState(): GameState {
       binTop: 0,
     },
     serverSettlementReady: true,
+    latestServerWalletNonce: -1,
     usesServerSettlement: false,
   };
+}
+
+function playableBalance(state: GameState) {
+  return availableForDrop({
+    balance: state.balance,
+    pendingServerBetTotal: state.pendingServerBetTotal,
+    usesServerSettlement: state.usesServerSettlement,
+  });
 }
 
 function snapshot(state: GameState): ViewState {
@@ -272,11 +285,11 @@ function snapshot(state: GameState): ViewState {
   const roundedBet = Number.isFinite(bet) ? Math.round(bet) : 0;
   const isBusy = state.activeBalls.length + state.pendingDrops > 0;
   const hasInvalidBet = !Number.isSafeInteger(roundedBet) || roundedBet <= 0;
-  const hasInsufficientBalance = !hasInvalidBet && roundedBet > state.balance;
+  const hasInsufficientBalance = !hasInvalidBet && roundedBet > playableBalance(state);
   const isWaitingForServerWallet = usesServerSettlement && !state.serverSettlementReady;
 
   return {
-    balance: state.balance,
+    balance: playableBalance(state),
     betInput: state.betInput,
     rows: state.rows,
     risk: state.risk,
@@ -285,11 +298,10 @@ function snapshot(state: GameState): ViewState {
       : hasInsufficientBalance
         ? "Bet exceeds available balance."
         : null,
-    dropButtonLabel: state.pendingDrops > 0 ? "Settling" : "Drop",
+    dropButtonLabel: "Drop",
     isBetControlsDisabled: isBusy || isWaitingForServerWallet,
     isSettingsLocked: isBusy,
     isDropDisabled:
-      isBusy ||
       hasInvalidBet ||
       hasInsufficientBalance ||
       (usesServerSettlement ? !state.serverSettlementReady : !state.fairness.currentCommit),
@@ -517,7 +529,7 @@ export function App() {
   const walletAvailable = cashier?.wallet.availableBalance ?? 0;
   const walletHeld = cashier?.wallet.heldBalance ?? 0;
   const walletStatus = sessionToken ? (cashier ? "Ready" : "Syncing") : "Passkey required";
-  const displayBalance = isWalletBacked ? walletAvailable : view.balance;
+  const displayBalance = view.balance;
   const displayPlayHistory =
     isWalletBacked && recentRounds
       ? recentRounds
@@ -924,7 +936,7 @@ export function App() {
   async function startDrop() {
     const state = gameRef.current;
     const bet = currentBet();
-    if (bet > state.balance) {
+    if (bet > playableBalance(state)) {
       setGameError("Bet exceeds available balance.");
       return;
     }
@@ -940,6 +952,7 @@ export function App() {
       const clientSeed = currentClientSeed();
 
       state.pendingDrops += 1;
+      state.pendingServerBetTotal += bet;
       state.lastPath = [];
       state.lastSlot = null;
       state.lastWin = 0;
@@ -959,7 +972,10 @@ export function App() {
         const round = result.round as SettledPlinkoRound;
         const drop = dropFromSettledRound(round);
 
-        state.balance = result.wallet.availableBalance;
+        if (round.nonce >= state.latestServerWalletNonce) {
+          state.balance = result.wallet.availableBalance;
+          state.latestServerWalletNonce = round.nonce;
+        }
         state.lastPath = [...drop.directions];
         state.activeBalls.push({
           bet,
@@ -986,6 +1002,7 @@ export function App() {
         setGameError(error instanceof Error ? error.message : "Plinko settlement failed.");
       } finally {
         state.pendingDrops -= 1;
+        state.pendingServerBetTotal = Math.max(0, state.pendingServerBetTotal - bet);
         publish();
       }
 
@@ -1496,6 +1513,8 @@ export function App() {
           risk: state.risk,
           active: state.activeBalls.length,
           pending: state.pendingDrops,
+          pendingServerBetTotal: state.pendingServerBetTotal,
+          playableBalance: playableBalance(state),
           currentServerHash: state.fairness.currentCommit?.serverSeedHash,
           currentNonce: state.fairness.currentCommit?.nonce,
           lastProof: state.fairness.lastProof,
