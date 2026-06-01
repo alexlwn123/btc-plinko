@@ -3,7 +3,7 @@ import {
   startAuthentication,
   startRegistration,
 } from "@simplewebauthn/browser";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../convex/_generated/api";
 import {
@@ -32,6 +32,7 @@ const ROW_MAX = 16;
 const ROW_STEP = 2;
 const DEFAULT_DEPOSIT_AMOUNT = "1000";
 const DEFAULT_WITHDRAW_AMOUNT = "250";
+const DEFAULT_WITHDRAW_INVOICE = "";
 const CASHIER_HISTORY_LIMIT = 16;
 const DEV_PROFILE = {
   accountState: "active",
@@ -144,13 +145,11 @@ type CashierTab = "deposit" | "withdraw" | "history";
 
 type CashierBusy =
   | "deposit:create"
-  | "deposit:complete"
-  | "deposit:fail"
   | "deposit:cancel"
+  | "deposit:sync"
   | "withdrawal:create"
-  | "withdrawal:complete"
-  | "withdrawal:fail"
   | "withdrawal:cancel"
+  | "withdrawal:sync"
   | "retry";
 
 type SettledPlinkoRound = {
@@ -426,6 +425,7 @@ export function App() {
   const [cashierTab, setCashierTab] = useState<CashierTab>("deposit");
   const [depositInput, setDepositInput] = useState(DEFAULT_DEPOSIT_AMOUNT);
   const [withdrawInput, setWithdrawInput] = useState(DEFAULT_WITHDRAW_AMOUNT);
+  const [withdrawInvoiceInput, setWithdrawInvoiceInput] = useState(DEFAULT_WITHDRAW_INVOICE);
   const [cashierBusy, setCashierBusy] = useState<CashierBusy | null>(null);
   const [cashierError, setCashierError] = useState<string | null>(null);
   const [gameError, setGameError] = useState<string | null>(null);
@@ -436,14 +436,12 @@ export function App() {
   const verifyPasskeyAuthentication = useMutation(api.users.verifyPasskeyAuthentication);
   const signOutPasskey = useMutation(api.users.signOutPasskey);
   const ensureWallet = useMutation(api.wallets.ensureWallet);
-  const createFakeDeposit = useMutation(api.cashier.createFakeDeposit);
-  const completeFakeDeposit = useMutation(api.cashier.completeFakeDeposit);
-  const failFakeDeposit = useMutation(api.cashier.failFakeDeposit);
   const cancelFakeDeposit = useMutation(api.cashier.cancelFakeDeposit);
-  const createFakeWithdrawal = useMutation(api.cashier.createFakeWithdrawal);
-  const completeFakeWithdrawal = useMutation(api.cashier.completeFakeWithdrawal);
-  const failFakeWithdrawal = useMutation(api.cashier.failFakeWithdrawal);
   const cancelFakeWithdrawal = useMutation(api.cashier.cancelFakeWithdrawal);
+  const createLightningDeposit = useAction(api.lightning.createDeposit);
+  const syncLightningDeposit = useAction(api.lightning.syncDeposit);
+  const createLightningWithdrawal = useAction(api.lightning.createWithdrawal);
+  const syncLightningWithdrawal = useAction(api.lightning.syncWithdrawal);
   const settlePlinkoDrop = useMutation(api.plinko.settleDrop);
   const profile = useQuery(api.users.getSessionUser, sessionToken ? { sessionToken } : "skip");
   const cashier = useQuery(api.cashier.getCashier, sessionToken ? { sessionToken } : "skip");
@@ -495,7 +493,6 @@ export function App() {
         .sort((left, right) => right.createdAt - left.createdAt)
         .slice(0, CASHIER_HISTORY_LIMIT)
     : [];
-  const canUseFakeCashierControls = import.meta.env.DEV;
 
   function publish() {
     setView(snapshot(gameRef.current));
@@ -1175,7 +1172,7 @@ export function App() {
     }
 
     await runCashierAction("deposit:create", async (token) => {
-      await createFakeDeposit({
+      await createLightningDeposit({
         amount,
         requestId: newCashierRequestId("deposit"),
         sessionToken: token,
@@ -1194,13 +1191,21 @@ export function App() {
       return;
     }
 
+    const paymentRequest = withdrawInvoiceInput.trim();
+    if (!paymentRequest) {
+      setCashierError("Paste a Lightning invoice to withdraw.");
+      return;
+    }
+
     await runCashierAction("withdrawal:create", async (token) => {
-      await createFakeWithdrawal({
+      await createLightningWithdrawal({
         amount,
+        paymentRequest,
         requestId: newCashierRequestId("withdrawal"),
         sessionToken: token,
       });
       setWithdrawInput(DEFAULT_WITHDRAW_AMOUNT);
+      setWithdrawInvoiceInput(DEFAULT_WITHDRAW_INVOICE);
       setCashierTab("history");
     });
   }
@@ -1783,8 +1788,16 @@ export function App() {
                       />
                       <span>Sats</span>
                     </div>
+                    <label htmlFor="withdrawInvoice">Lightning invoice</label>
+                    <textarea
+                      id="withdrawInvoice"
+                      value={withdrawInvoiceInput}
+                      spellCheck={false}
+                      autoComplete="off"
+                      onChange={(event) => setWithdrawInvoiceInput(event.target.value)}
+                    />
                     <button className="auth-primary" type="submit" disabled={cashierBusy !== null}>
-                      Request Withdraw
+                      Pay Invoice
                     </button>
                   </form>
                 ) : null}
@@ -1803,7 +1816,10 @@ export function App() {
                             <div className="cashier-transaction-main">
                               <div>
                                 <strong>{formatCashierType(entry.type)}</strong>
-                                <span>{formatCashierDate(entry.createdAt)}</span>
+                                <span>
+                                  {entry.provider === "lnd" ? "Lightning" : "Manual"} /{" "}
+                                  {formatCashierDate(entry.createdAt)}
+                                </span>
                               </div>
                               <div>
                                 <strong>{formatNumber(entry.amount, 0)}</strong>
@@ -1814,59 +1830,74 @@ export function App() {
                               </span>
                             </div>
 
+                            {entry.providerError ? (
+                              <div className="cashier-provider-error">{entry.providerError}</div>
+                            ) : null}
+
+                            {entry.type === "deposit" && entry.lightningPaymentRequest ? (
+                              <div className="cashier-invoice-box">
+                                <span>Lightning invoice</span>
+                                <code>{entry.lightningPaymentRequest}</code>
+                              </div>
+                            ) : null}
+
+                            {entry.type === "withdrawal" && entry.lightningPaymentRequest ? (
+                              <div className="cashier-invoice-box">
+                                <span>Paid invoice</span>
+                                <code>{entry.lightningPaymentRequest}</code>
+                              </div>
+                            ) : null}
+
                             <div className="cashier-transaction-actions">
-                              {entry.status === "pending" && canUseFakeCashierControls ? (
-                                <>
-                                  <button
-                                    type="button"
-                                    disabled={cashierBusy !== null}
-                                    onClick={() =>
-                                      void runCashierAction(
-                                        entry.type === "deposit"
-                                          ? "deposit:complete"
-                                          : "withdrawal:complete",
-                                        (token) =>
-                                          entry.type === "deposit"
-                                            ? completeFakeDeposit({
-                                                depositId: entry.id,
-                                                sessionToken: token,
-                                              })
-                                            : completeFakeWithdrawal({
-                                                sessionToken: token,
-                                                withdrawalId: entry.id,
-                                              }),
-                                      )
-                                    }
-                                  >
-                                    Complete
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={cashierBusy !== null}
-                                    onClick={() =>
-                                      void runCashierAction(
-                                        entry.type === "deposit"
-                                          ? "deposit:fail"
-                                          : "withdrawal:fail",
-                                        (token) =>
-                                          entry.type === "deposit"
-                                            ? failFakeDeposit({
-                                                depositId: entry.id,
-                                                sessionToken: token,
-                                              })
-                                            : failFakeWithdrawal({
-                                                sessionToken: token,
-                                                withdrawalId: entry.id,
-                                              }),
-                                      )
-                                    }
-                                  >
-                                    Fail
-                                  </button>
-                                </>
+                              {entry.type === "deposit" && entry.lightningPaymentRequest ? (
+                                <button
+                                  type="button"
+                                  disabled={cashierBusy !== null}
+                                  onClick={() =>
+                                    void navigator.clipboard?.writeText(
+                                      entry.lightningPaymentRequest ?? "",
+                                    )
+                                  }
+                                >
+                                  Copy
+                                </button>
                               ) : null}
 
-                              {entry.status === "pending" ? (
+                              {entry.status === "pending" && entry.type === "deposit" ? (
+                                <button
+                                  type="button"
+                                  disabled={cashierBusy !== null}
+                                  onClick={() =>
+                                    void runCashierAction("deposit:sync", (token) =>
+                                      syncLightningDeposit({
+                                        depositId: entry.id,
+                                        sessionToken: token,
+                                      }),
+                                    )
+                                  }
+                                >
+                                  Check Payment
+                                </button>
+                              ) : null}
+
+                              {entry.status === "pending" && entry.type === "withdrawal" ? (
+                                <button
+                                  type="button"
+                                  disabled={cashierBusy !== null}
+                                  onClick={() =>
+                                    void runCashierAction("withdrawal:sync", (token) =>
+                                      syncLightningWithdrawal({
+                                        sessionToken: token,
+                                        withdrawalId: entry.id,
+                                      }),
+                                    )
+                                  }
+                                >
+                                  Check Status
+                                </button>
+                              ) : null}
+
+                              {entry.status === "pending" && entry.provider !== "lnd" ? (
                                 <button
                                   type="button"
                                   disabled={cashierBusy !== null}
@@ -1902,6 +1933,7 @@ export function App() {
                                       setCashierTab("deposit");
                                     } else {
                                       setWithdrawInput(String(entry.amount));
+                                      setWithdrawInvoiceInput(entry.lightningPaymentRequest ?? "");
                                       setCashierTab("withdraw");
                                     }
                                   }}

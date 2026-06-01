@@ -29,7 +29,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -807,6 +808,24 @@ input[type="range"] {
   box-shadow: inset 0 0 0 1px rgba(0, 228, 141, 0.56);
 }
 
+.cashier-form textarea {
+  min-height: 104px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  outline: 0;
+  padding: 12px;
+  color: var(--text);
+  background: #101319;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.cashier-form textarea:focus {
+  border-color: rgba(0, 228, 141, 0.68);
+}
+
 .cashier-amount-row span {
   padding: 0 12px;
 }
@@ -897,6 +916,44 @@ input[type="range"] {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.cashier-provider-error {
+  padding: 8px 10px;
+  border: 1px solid rgba(243, 91, 91, 0.28);
+  border-radius: 8px;
+  color: #ffb7b7;
+  background: rgba(243, 91, 91, 0.09);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.cashier-invoice-box {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid rgba(43, 183, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(43, 183, 255, 0.08);
+}
+
+.cashier-invoice-box span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.cashier-invoice-box code {
+  max-height: 68px;
+  overflow: auto;
+  color: #cde8ff;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .cashier-transaction-actions button {

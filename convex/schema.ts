@@ -104,6 +104,20 @@ export default defineSchema({
     createdAt: v.number(),
     failedAt: v.optional(v.number()),
     idempotencyKey: v.string(),
+    lightningExpiresAt: v.optional(v.number()),
+    lightningPaymentHash: v.optional(v.string()),
+    lightningPaymentRequest: v.optional(v.string()),
+    lightningState: v.optional(
+      v.union(
+        v.literal("invoice_created"),
+        v.literal("settled"),
+        v.literal("canceled"),
+        v.literal("expired"),
+        v.literal("failed"),
+      ),
+    ),
+    provider: v.optional(v.literal("lnd")),
+    providerError: v.optional(v.string()),
     status: v.union(
       v.literal("pending"),
       v.literal("completed"),
@@ -125,6 +139,20 @@ export default defineSchema({
     failedAt: v.optional(v.number()),
     holdEventId: v.optional(v.id("walletEvents")),
     idempotencyKey: v.string(),
+    lightningFeePaid: v.optional(v.number()),
+    lightningPaymentHash: v.optional(v.string()),
+    lightningPaymentPreimage: v.optional(v.string()),
+    lightningPaymentRequest: v.optional(v.string()),
+    lightningState: v.optional(
+      v.union(
+        v.literal("payment_created"),
+        v.literal("in_flight"),
+        v.literal("succeeded"),
+        v.literal("failed"),
+      ),
+    ),
+    provider: v.optional(v.literal("lnd")),
+    providerError: v.optional(v.string()),
     resultEventId: v.optional(v.id("walletEvents")),
     status: v.union(
       v.literal("pending"),

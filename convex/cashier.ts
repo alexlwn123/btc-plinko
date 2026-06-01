@@ -1,6 +1,13 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import { type MutationCtx, mutation, query } from "./_generated/server";
+import {
+  type MutationCtx,
+  type QueryCtx,
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from "./_generated/server";
 import {
   type CashierStatus,
   assertCashierAmount,
@@ -28,7 +35,13 @@ function serializeDeposit(deposit: Doc<"deposits">) {
     completedAt: deposit.completedAt,
     createdAt: deposit.createdAt,
     failedAt: deposit.failedAt,
+    lightningExpiresAt: deposit.lightningExpiresAt,
+    lightningPaymentHash: deposit.lightningPaymentHash,
+    lightningPaymentRequest: deposit.lightningPaymentRequest,
+    lightningState: deposit.lightningState,
     id: deposit._id,
+    provider: deposit.provider,
+    providerError: deposit.providerError,
     status: deposit.status,
     type: "deposit" as const,
     updatedAt: deposit.updatedAt,
@@ -43,6 +56,13 @@ function serializeWithdrawal(withdrawal: Doc<"withdrawals">) {
     createdAt: withdrawal.createdAt,
     failedAt: withdrawal.failedAt,
     id: withdrawal._id,
+    lightningFeePaid: withdrawal.lightningFeePaid,
+    lightningPaymentHash: withdrawal.lightningPaymentHash,
+    lightningPaymentPreimage: withdrawal.lightningPaymentPreimage,
+    lightningPaymentRequest: withdrawal.lightningPaymentRequest,
+    lightningState: withdrawal.lightningState,
+    provider: withdrawal.provider,
+    providerError: withdrawal.providerError,
     status: withdrawal.status,
     type: "withdrawal" as const,
     updatedAt: withdrawal.updatedAt,
@@ -50,7 +70,7 @@ function serializeWithdrawal(withdrawal: Doc<"withdrawals">) {
 }
 
 async function requireUserDeposit(
-  ctx: MutationCtx,
+  ctx: QueryCtx | MutationCtx,
   sessionToken: string,
   depositId: Id<"deposits">,
 ) {
@@ -65,7 +85,7 @@ async function requireUserDeposit(
 }
 
 async function requireUserWithdrawal(
-  ctx: MutationCtx,
+  ctx: QueryCtx | MutationCtx,
   sessionToken: string,
   withdrawalId: Id<"withdrawals">,
 ) {
@@ -120,6 +140,504 @@ async function patchWithdrawalStatus(
     resultEventId === undefined ? patch : { ...patch, resultEventId },
   );
 }
+
+async function getDeposit(ctx: QueryCtx | MutationCtx, depositId: Id<"deposits">) {
+  const deposit = await ctx.db.get(depositId);
+
+  if (!deposit) {
+    throw new Error("Deposit was not found.");
+  }
+
+  return deposit;
+}
+
+async function getWithdrawal(ctx: QueryCtx | MutationCtx, withdrawalId: Id<"withdrawals">) {
+  const withdrawal = await ctx.db.get(withdrawalId);
+
+  if (!withdrawal) {
+    throw new Error("Withdrawal was not found.");
+  }
+
+  return withdrawal;
+}
+
+function assertPaymentHashMatches(existing: string | undefined, next: string, label: string) {
+  if (existing && existing !== next) {
+    throw new Error(`${label} payment hash does not match.`);
+  }
+}
+
+export async function createLightningDepositRecordForUser(
+  ctx: MutationCtx,
+  {
+    amount,
+    requestId,
+    userId,
+  }: {
+    amount: number;
+    requestId: string;
+    userId: Id<"users">;
+  },
+) {
+  assertCashierAmount(amount);
+
+  const now = Date.now();
+  const idempotencyKey = cashierRequestKey("deposit", requestId);
+  const existing = await ctx.db
+    .query("deposits")
+    .withIndex("by_user_idempotency", (q) =>
+      q.eq("userId", userId).eq("idempotencyKey", idempotencyKey),
+    )
+    .unique();
+
+  if (existing) {
+    return serializeDeposit(existing);
+  }
+
+  const depositId = await ctx.db.insert("deposits", {
+    amount,
+    createdAt: now,
+    idempotencyKey,
+    provider: "lnd",
+    status: "pending",
+    updatedAt: now,
+    userId,
+  });
+  const deposit = await getDeposit(ctx, depositId);
+
+  return serializeDeposit(deposit);
+}
+
+export async function attachLightningDepositInvoiceForUser(
+  ctx: MutationCtx,
+  {
+    depositId,
+    expiresAt,
+    paymentHash,
+    paymentRequest,
+  }: {
+    depositId: Id<"deposits">;
+    expiresAt: number;
+    paymentHash: string;
+    paymentRequest: string;
+  },
+) {
+  const deposit = await getDeposit(ctx, depositId);
+
+  if (deposit.lightningPaymentRequest) {
+    assertPaymentHashMatches(deposit.lightningPaymentHash, paymentHash, "Deposit");
+    return serializeDeposit(deposit);
+  }
+
+  assertPendingStatus(deposit.status, "Deposit");
+
+  await ctx.db.patch(depositId, {
+    lightningExpiresAt: expiresAt,
+    lightningPaymentHash: paymentHash,
+    lightningPaymentRequest: paymentRequest,
+    lightningState: "invoice_created",
+    providerError: undefined,
+    updatedAt: Date.now(),
+  });
+
+  return serializeDeposit(await getDeposit(ctx, depositId));
+}
+
+export async function settleLightningDepositForUser(
+  ctx: MutationCtx,
+  {
+    depositId,
+    paymentHash,
+    settledAmount,
+    settledAt = Date.now(),
+  }: {
+    depositId: Id<"deposits">;
+    paymentHash: string;
+    settledAmount?: number;
+    settledAt?: number;
+  },
+) {
+  const deposit = await getDeposit(ctx, depositId);
+
+  if (deposit.status === "completed") {
+    assertPaymentHashMatches(deposit.lightningPaymentHash, paymentHash, "Deposit");
+    return serializeDeposit(deposit);
+  }
+
+  assertPendingStatus(deposit.status, "Deposit");
+  assertPaymentHashMatches(deposit.lightningPaymentHash, paymentHash, "Deposit");
+
+  if (settledAmount !== undefined && settledAmount < deposit.amount) {
+    throw new Error("Lightning deposit paid less than requested.");
+  }
+
+  const amountToCredit = settledAmount ?? deposit.amount;
+  const result = await creditDepositForUser(ctx, {
+    amount: amountToCredit,
+    depositId,
+    idempotencyKey: idempotencyKeyFor("deposit", depositId, "deposit_credit"),
+    userId: deposit.userId,
+  });
+
+  await patchDepositStatus(ctx, deposit, "completed", settledAt, result.eventId);
+  await ctx.db.patch(depositId, {
+    amount: amountToCredit,
+    lightningState: "settled",
+    providerError: undefined,
+    updatedAt: settledAt,
+  });
+
+  return serializeDeposit(await getDeposit(ctx, depositId));
+}
+
+export async function failLightningDepositForUser(
+  ctx: MutationCtx,
+  {
+    depositId,
+    failureReason,
+    lightningState = "failed",
+  }: {
+    depositId: Id<"deposits">;
+    failureReason: string;
+    lightningState?: "canceled" | "expired" | "failed";
+  },
+) {
+  const deposit = await getDeposit(ctx, depositId);
+
+  if (deposit.status === "completed") {
+    return serializeDeposit(deposit);
+  }
+
+  if (deposit.status !== "pending") {
+    return serializeDeposit(deposit);
+  }
+
+  const now = Date.now();
+  await patchDepositStatus(ctx, deposit, "failed", now);
+  await ctx.db.patch(depositId, {
+    lightningState,
+    providerError: failureReason,
+    updatedAt: now,
+  });
+
+  return serializeDeposit(await getDeposit(ctx, depositId));
+}
+
+export async function createLightningWithdrawalRecordForUser(
+  ctx: MutationCtx,
+  {
+    amount,
+    paymentHash,
+    paymentRequest,
+    requestId,
+    userId,
+  }: {
+    amount: number;
+    paymentHash: string;
+    paymentRequest: string;
+    requestId: string;
+    userId: Id<"users">;
+  },
+) {
+  assertCashierAmount(amount);
+
+  const now = Date.now();
+  const idempotencyKey = cashierRequestKey("withdrawal", requestId);
+  const existing = await ctx.db
+    .query("withdrawals")
+    .withIndex("by_user_idempotency", (q) =>
+      q.eq("userId", userId).eq("idempotencyKey", idempotencyKey),
+    )
+    .unique();
+
+  if (existing) {
+    assertPaymentHashMatches(existing.lightningPaymentHash, paymentHash, "Withdrawal");
+    return serializeWithdrawal(existing);
+  }
+
+  const withdrawalId = await ctx.db.insert("withdrawals", {
+    amount,
+    createdAt: now,
+    idempotencyKey,
+    lightningPaymentHash: paymentHash,
+    lightningPaymentRequest: paymentRequest,
+    lightningState: "payment_created",
+    provider: "lnd",
+    status: "pending",
+    updatedAt: now,
+    userId,
+  });
+  const hold = await reserveWithdrawalForUser(ctx, {
+    amount,
+    idempotencyKey: idempotencyKeyFor("withdrawal", withdrawalId, "withdrawal_hold"),
+    userId,
+    withdrawalId,
+  });
+
+  await ctx.db.patch(withdrawalId, {
+    holdEventId: hold.eventId,
+    updatedAt: now,
+  });
+
+  return serializeWithdrawal(await getWithdrawal(ctx, withdrawalId));
+}
+
+export async function markLightningWithdrawalInFlightForUser(
+  ctx: MutationCtx,
+  {
+    failureReason,
+    paymentHash,
+    withdrawalId,
+  }: {
+    failureReason?: string;
+    paymentHash: string;
+    withdrawalId: Id<"withdrawals">;
+  },
+) {
+  const withdrawal = await getWithdrawal(ctx, withdrawalId);
+  assertPaymentHashMatches(withdrawal.lightningPaymentHash, paymentHash, "Withdrawal");
+
+  if (withdrawal.status !== "pending") {
+    return serializeWithdrawal(withdrawal);
+  }
+
+  await ctx.db.patch(withdrawalId, {
+    lightningState: "in_flight",
+    providerError: failureReason,
+    updatedAt: Date.now(),
+  });
+
+  return serializeWithdrawal(await getWithdrawal(ctx, withdrawalId));
+}
+
+export async function completeLightningWithdrawalForUser(
+  ctx: MutationCtx,
+  {
+    feePaid,
+    paymentHash,
+    paymentPreimage,
+    withdrawalId,
+  }: {
+    feePaid?: number;
+    paymentHash: string;
+    paymentPreimage?: string;
+    withdrawalId: Id<"withdrawals">;
+  },
+) {
+  const withdrawal = await getWithdrawal(ctx, withdrawalId);
+
+  if (withdrawal.status === "completed") {
+    assertPaymentHashMatches(withdrawal.lightningPaymentHash, paymentHash, "Withdrawal");
+    return serializeWithdrawal(withdrawal);
+  }
+
+  assertPendingStatus(withdrawal.status, "Withdrawal");
+  assertPaymentHashMatches(withdrawal.lightningPaymentHash, paymentHash, "Withdrawal");
+
+  const now = Date.now();
+  const result = await captureWithdrawalForUser(ctx, {
+    idempotencyKey: idempotencyKeyFor("withdrawal", withdrawalId, "withdrawal_capture"),
+    userId: withdrawal.userId,
+    withdrawalId,
+  });
+
+  await patchWithdrawalStatus(ctx, withdrawal, "completed", now, result.eventId);
+  await ctx.db.patch(withdrawalId, {
+    lightningFeePaid: feePaid,
+    lightningPaymentPreimage: paymentPreimage,
+    lightningState: "succeeded",
+    providerError: undefined,
+    updatedAt: now,
+  });
+
+  return serializeWithdrawal(await getWithdrawal(ctx, withdrawalId));
+}
+
+export async function failLightningWithdrawalForUser(
+  ctx: MutationCtx,
+  {
+    failureReason,
+    paymentHash,
+    withdrawalId,
+  }: {
+    failureReason: string;
+    paymentHash: string;
+    withdrawalId: Id<"withdrawals">;
+  },
+) {
+  const withdrawal = await getWithdrawal(ctx, withdrawalId);
+
+  if (withdrawal.status === "failed") {
+    return serializeWithdrawal(withdrawal);
+  }
+
+  if (withdrawal.status !== "pending") {
+    return serializeWithdrawal(withdrawal);
+  }
+
+  assertPaymentHashMatches(withdrawal.lightningPaymentHash, paymentHash, "Withdrawal");
+
+  const now = Date.now();
+  const result = await releaseWithdrawalForUser(ctx, {
+    idempotencyKey: idempotencyKeyFor("withdrawal", withdrawalId, "withdrawal_release"),
+    status: "failed",
+    userId: withdrawal.userId,
+    withdrawalId,
+  });
+
+  await patchWithdrawalStatus(ctx, withdrawal, "failed", now, result.eventId);
+  await ctx.db.patch(withdrawalId, {
+    lightningState: "failed",
+    providerError: failureReason,
+    updatedAt: now,
+  });
+
+  return serializeWithdrawal(await getWithdrawal(ctx, withdrawalId));
+}
+
+export const requireCashierSession = internalQuery({
+  args: {
+    sessionToken: v.string(),
+  },
+  handler: async (ctx, { sessionToken }) => {
+    const user = await requireActiveUserBySession(ctx, sessionToken);
+
+    return {
+      userId: user._id,
+    };
+  },
+});
+
+export const getLightningDepositForUser = internalQuery({
+  args: {
+    depositId: v.id("deposits"),
+    sessionToken: v.string(),
+  },
+  handler: async (ctx, { depositId, sessionToken }) => {
+    const { deposit } = await requireUserDeposit(ctx, sessionToken, depositId);
+    return serializeDeposit(deposit);
+  },
+});
+
+export const getLightningWithdrawalForUser = internalQuery({
+  args: {
+    sessionToken: v.string(),
+    withdrawalId: v.id("withdrawals"),
+  },
+  handler: async (ctx, { sessionToken, withdrawalId }) => {
+    const { withdrawal } = await requireUserWithdrawal(ctx, sessionToken, withdrawalId);
+    return serializeWithdrawal(withdrawal);
+  },
+});
+
+export const createLightningDepositRecord = internalMutation({
+  args: {
+    amount: v.number(),
+    requestId: v.string(),
+    sessionToken: v.string(),
+  },
+  handler: async (ctx, { amount, requestId, sessionToken }) => {
+    const user = await requireActiveUserBySession(ctx, sessionToken);
+
+    return await createLightningDepositRecordForUser(ctx, {
+      amount,
+      requestId,
+      userId: user._id,
+    });
+  },
+});
+
+export const attachLightningDepositInvoice = internalMutation({
+  args: {
+    depositId: v.id("deposits"),
+    expiresAt: v.number(),
+    paymentHash: v.string(),
+    paymentRequest: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return await attachLightningDepositInvoiceForUser(ctx, args);
+  },
+});
+
+export const settleLightningDeposit = internalMutation({
+  args: {
+    depositId: v.id("deposits"),
+    paymentHash: v.string(),
+    settledAmount: v.optional(v.number()),
+    settledAt: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    return await settleLightningDepositForUser(ctx, args);
+  },
+});
+
+export const failLightningDeposit = internalMutation({
+  args: {
+    depositId: v.id("deposits"),
+    failureReason: v.string(),
+    lightningState: v.optional(
+      v.union(v.literal("canceled"), v.literal("expired"), v.literal("failed")),
+    ),
+  },
+  handler: async (ctx, args) => {
+    return await failLightningDepositForUser(ctx, args);
+  },
+});
+
+export const createLightningWithdrawalRecord = internalMutation({
+  args: {
+    amount: v.number(),
+    paymentHash: v.string(),
+    paymentRequest: v.string(),
+    requestId: v.string(),
+    sessionToken: v.string(),
+  },
+  handler: async (ctx, { amount, paymentHash, paymentRequest, requestId, sessionToken }) => {
+    const user = await requireActiveUserBySession(ctx, sessionToken);
+
+    return await createLightningWithdrawalRecordForUser(ctx, {
+      amount,
+      paymentHash,
+      paymentRequest,
+      requestId,
+      userId: user._id,
+    });
+  },
+});
+
+export const markLightningWithdrawalInFlight = internalMutation({
+  args: {
+    failureReason: v.optional(v.string()),
+    paymentHash: v.string(),
+    withdrawalId: v.id("withdrawals"),
+  },
+  handler: async (ctx, args) => {
+    return await markLightningWithdrawalInFlightForUser(ctx, args);
+  },
+});
+
+export const completeLightningWithdrawal = internalMutation({
+  args: {
+    feePaid: v.optional(v.number()),
+    paymentHash: v.string(),
+    paymentPreimage: v.optional(v.string()),
+    withdrawalId: v.id("withdrawals"),
+  },
+  handler: async (ctx, args) => {
+    return await completeLightningWithdrawalForUser(ctx, args);
+  },
+});
+
+export const failLightningWithdrawal = internalMutation({
+  args: {
+    failureReason: v.string(),
+    paymentHash: v.string(),
+    withdrawalId: v.id("withdrawals"),
+  },
+  handler: async (ctx, args) => {
+    return await failLightningWithdrawalForUser(ctx, args);
+  },
+});
 
 export const getCashier = query({
   args: {

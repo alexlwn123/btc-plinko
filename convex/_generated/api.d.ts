@@ -11,6 +11,8 @@
 import type * as admin from "../admin.js";
 import type * as cashier from "../cashier.js";
 import type * as cashierCore from "../cashierCore.js";
+import type * as lightning from "../lightning.js";
+import type * as lndClient from "../lndClient.js";
 import type * as plinko from "../plinko.js";
 import type * as plinkoCore from "../plinkoCore.js";
 import type * as users from "../users.js";
@@ -27,6 +29,8 @@ declare const fullApi: ApiFromModules<{
   admin: typeof admin;
   cashier: typeof cashier;
   cashierCore: typeof cashierCore;
+  lightning: typeof lightning;
+  lndClient: typeof lndClient;
   plinko: typeof plinko;
   plinkoCore: typeof plinkoCore;
   users: typeof users;

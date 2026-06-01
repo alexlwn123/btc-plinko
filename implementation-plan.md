@@ -1,6 +1,6 @@
 # Casino Implementation Plan
 
-This plan turns the current Plinko demo into an account-based casino game using Convex as the backend/database layer. The phases below are the intended implementation order. Payment rails are treated as a black box: the app needs deposit and withdrawal UI plus internal wallet state handling, but not the actual payment provider implementation yet.
+This plan turns the current Plinko demo into an account-based casino game using Convex as the backend/database layer. The phases below are the intended implementation order. Deposit and withdrawal rails use Lightning payments through an LND node, with all LND credentials kept server-side.
 
 ## Implementation Guidance
 
@@ -93,6 +93,10 @@ This plan turns the current Plinko demo into an account-based casino game using 
 - [x] Place withdrawal funds into a pending state.
 - [x] Finalize or release pending withdrawal funds based on fake withdrawal result.
 - [x] Show clear loading, pending, failed, and retry states.
+- [x] Add LND-backed Lightning invoice creation for deposits.
+- [x] Add LND-backed Lightning invoice payment for withdrawals.
+- [x] Keep LND calls behind Convex actions instead of exposing node credentials to the browser.
+- [x] Add Lightning payment status checks for pending deposits and withdrawals.
 
 ## Phase 5: Server-Side Plinko Settlement
 
@@ -147,7 +151,7 @@ This plan turns the current Plinko demo into an account-based casino game using 
 
 ## Out Of Scope For This Plan
 
-- [ ] Do not implement the real deposit payment rails yet.
-- [ ] Do not implement the real withdrawal payment rails yet.
-- [ ] Do not choose provider-specific callback payloads yet.
+- [ ] Do not expose LND REST, gRPC, macaroons, or TLS material to the browser.
+- [ ] Do not add keysend withdrawals for MVP.
+- [ ] Do not add LNURL deposit or withdrawal flows for MVP.
 - [ ] Do not over-design final database tables before the Convex implementation starts.
