@@ -16,7 +16,9 @@ export default defineSchema({
     lastSeenAt: v.number(),
     publicId: v.optional(v.string()),
     role: v.optional(v.union(v.literal("player"), v.literal("admin"))),
-  }).index("by_anonymous_id", ["anonymousId"]),
+  })
+    .index("by_anonymous_id", ["anonymousId"])
+    .index("by_public_id", ["publicId"]),
   passkeyCredentials: defineTable({
     backedUp: v.boolean(),
     counter: v.number(),
@@ -199,4 +201,24 @@ export default defineSchema({
     .index("by_user_created_at", ["userId", "createdAt"])
     .index("by_user_idempotency", ["userId", "idempotencyKey"])
     .index("by_user_nonce", ["userId", "nonce"]),
+  adminActions: defineTable({
+    action: v.union(v.literal("account_state_change"), v.literal("manual_balance_adjustment")),
+    adminUserId: v.id("users"),
+    amount: v.optional(v.number()),
+    createdAt: v.number(),
+    direction: v.optional(v.union(v.literal("credit"), v.literal("debit"))),
+    reason: v.string(),
+    targetId: v.string(),
+    targetType: v.union(
+      v.literal("user"),
+      v.literal("wallet"),
+      v.literal("deposit"),
+      v.literal("withdrawal"),
+      v.literal("game_round"),
+    ),
+    targetUserId: v.optional(v.id("users")),
+  })
+    .index("by_created_at", ["createdAt"])
+    .index("by_target_user_created_at", ["targetUserId", "createdAt"])
+    .index("by_admin_created_at", ["adminUserId", "createdAt"]),
 });

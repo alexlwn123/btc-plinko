@@ -30,6 +30,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -750,7 +751,8 @@ input[type="range"] {
   font-weight: 800;
 }
 
-.cashier-tabs {
+.cashier-tabs,
+.admin-tabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
@@ -760,7 +762,12 @@ input[type="range"] {
   background: #101319;
 }
 
-.cashier-tabs button {
+.admin-tabs {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.cashier-tabs button,
+.admin-tabs button {
   min-width: 0;
   padding: 10px 6px;
   border-radius: 6px;
@@ -770,7 +777,8 @@ input[type="range"] {
   font-weight: 900;
 }
 
-.cashier-tabs button.active {
+.cashier-tabs button.active,
+.admin-tabs button.active {
   color: #07110d;
   background: var(--green);
 }
@@ -1126,6 +1134,122 @@ input[type="range"] {
   border-color: rgba(243, 91, 91, 0.24);
 }
 
+.admin-support {
+  display: grid;
+  gap: 14px;
+}
+
+.admin-lookup-form {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.admin-lookup-form label,
+.admin-action-panel label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.admin-lookup-form input,
+.admin-action-panel input,
+.admin-adjustment-form input,
+.admin-adjustment-form select {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  outline: 0;
+  padding: 10px;
+  color: var(--text);
+  background: #101319;
+}
+
+.admin-lookup-form button {
+  min-height: 38px;
+  border-radius: 8px;
+}
+
+.admin-user-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.admin-user-summary > div,
+.admin-action-panel {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #101319;
+}
+
+.admin-user-summary span,
+.admin-user-summary small {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.admin-user-summary strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-user-summary small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-action-panel {
+  gap: 10px;
+}
+
+.admin-action-buttons,
+.admin-adjustment-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-action-buttons button,
+.admin-adjustment-form button {
+  min-height: 36px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--panel-2);
+  font-size: 0.75rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.admin-adjustment-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, auto) auto;
+}
+
+.admin-support-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
 .board-panel {
   position: relative;
   align-self: start;
@@ -1464,6 +1588,16 @@ input[type="range"] {
 
   .admin-row {
     grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .admin-lookup-form,
+  .admin-user-summary,
+  .admin-support-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-adjustment-form {
+    grid-template-columns: 1fr;
   }
 
   .is-playing .game-control-group {

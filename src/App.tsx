@@ -6,6 +6,7 @@ import {
 import { useAction, useMutation, useQuery } from "convex/react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../convex/_generated/api";
+import type { Id } from "../convex/_generated/dataModel";
 import {
   type Drop,
   type DropPoint,
@@ -151,6 +152,18 @@ type CashierBusy =
   | "withdrawal:cancel"
   | "withdrawal:sync"
   | "retry";
+
+type AdminTab = "overview" | "support";
+
+type AdminBusy = "account" | "adjustment";
+
+type AdminLookupRequest = {
+  depositId?: Id<"deposits">;
+  publicId?: string;
+  roundId?: Id<"gameRounds">;
+  userId?: Id<"users">;
+  withdrawalId?: Id<"withdrawals">;
+};
 
 type SettledPlinkoRound = {
   betAmount: number;
@@ -341,6 +354,14 @@ function newPlinkoRequestId() {
   return `plinko-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function newAdminRequestId() {
+  if ("randomUUID" in crypto) {
+    return `admin-${crypto.randomUUID()}`;
+  }
+
+  return `admin-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 function formatCashierDate(timestamp: number) {
   return new Intl.DateTimeFormat("en-US", {
     day: "2-digit",
@@ -422,6 +443,20 @@ export function App() {
   const [isControlSheetHidden, setIsControlSheetHidden] = useState(false);
   const [isCashierOpen, setIsCashierOpen] = useState(false);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
+  const [adminTab, setAdminTab] = useState<AdminTab>("overview");
+  const [adminBusy, setAdminBusy] = useState<AdminBusy | null>(null);
+  const [adminError, setAdminError] = useState<string | null>(null);
+  const [adminReason, setAdminReason] = useState("");
+  const [adminAdjustmentInput, setAdminAdjustmentInput] = useState("100");
+  const [adminAdjustmentDirection, setAdminAdjustmentDirection] = useState<"credit" | "debit">(
+    "credit",
+  );
+  const [adminLookupRequest, setAdminLookupRequest] = useState<AdminLookupRequest | null>(null);
+  const [adminLookupUserId, setAdminLookupUserId] = useState("");
+  const [adminLookupPublicId, setAdminLookupPublicId] = useState("");
+  const [adminLookupDepositId, setAdminLookupDepositId] = useState("");
+  const [adminLookupWithdrawalId, setAdminLookupWithdrawalId] = useState("");
+  const [adminLookupRoundId, setAdminLookupRoundId] = useState("");
   const [cashierTab, setCashierTab] = useState<CashierTab>("deposit");
   const [depositInput, setDepositInput] = useState(DEFAULT_DEPOSIT_AMOUNT);
   const [withdrawInput, setWithdrawInput] = useState(DEFAULT_WITHDRAW_AMOUNT);
@@ -438,6 +473,8 @@ export function App() {
   const ensureWallet = useMutation(api.wallets.ensureWallet);
   const cancelFakeDeposit = useMutation(api.cashier.cancelFakeDeposit);
   const cancelFakeWithdrawal = useMutation(api.cashier.cancelFakeWithdrawal);
+  const setAdminUserAccountState = useMutation(api.admin.setUserAccountState);
+  const manualAdminBalanceAdjustment = useMutation(api.admin.manualBalanceAdjustment);
   const createLightningDeposit = useAction(api.lightning.createDeposit);
   const syncLightningDeposit = useAction(api.lightning.syncDeposit);
   const createLightningWithdrawal = useAction(api.lightning.createWithdrawal);
@@ -453,6 +490,12 @@ export function App() {
   const adminMetrics = useQuery(
     api.admin.getSiteMetrics,
     canViewAdmin && isAdminOpen && sessionToken ? { sessionToken } : "skip",
+  );
+  const adminSupportLookup = useQuery(
+    api.admin.getSupportLookup,
+    canViewAdmin && isAdminOpen && adminTab === "support" && sessionToken && adminLookupRequest
+      ? { ...adminLookupRequest, sessionToken }
+      : "skip",
   );
   const accountProfile = isDevSignedIn ? DEV_PROFILE : profile;
   const accountLabel = accountProfile?.publicId ?? "Passkey";
@@ -1207,6 +1250,101 @@ export function App() {
       setWithdrawInput(DEFAULT_WITHDRAW_AMOUNT);
       setWithdrawInvoiceInput(DEFAULT_WITHDRAW_INVOICE);
       setCashierTab("history");
+    });
+  }
+
+  function handleAdminLookup(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const next: AdminLookupRequest = {};
+    const userId = adminLookupUserId.trim();
+    const publicId = adminLookupPublicId.trim();
+    const depositId = adminLookupDepositId.trim();
+    const withdrawalId = adminLookupWithdrawalId.trim();
+    const roundId = adminLookupRoundId.trim();
+
+    if (userId) next.userId = userId as Id<"users">;
+    if (publicId) next.publicId = publicId;
+    if (depositId) next.depositId = depositId as Id<"deposits">;
+    if (withdrawalId) next.withdrawalId = withdrawalId as Id<"withdrawals">;
+    if (roundId) next.roundId = roundId as Id<"gameRounds">;
+
+    if (Object.keys(next).length === 0) {
+      setAdminError("Enter at least one lookup value.");
+      return;
+    }
+
+    setAdminError(null);
+    setAdminLookupRequest(next);
+  }
+
+  async function runAdminAction(task: AdminBusy, action: (token: string) => Promise<unknown>) {
+    if (!sessionToken) {
+      setAdminError("Admin session required.");
+      return;
+    }
+
+    setAdminBusy(task);
+    setAdminError(null);
+
+    try {
+      await action(sessionToken);
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : "Admin action failed.");
+    } finally {
+      setAdminBusy(null);
+    }
+  }
+
+  function currentAdminUserId() {
+    const userId = adminSupportLookup?.user?.id;
+    return userId ? (userId as Id<"users">) : null;
+  }
+
+  async function handleAdminAccountState(
+    state: "active" | "locked" | "pending_review" | "disabled",
+  ) {
+    const userId = currentAdminUserId();
+    if (!userId) {
+      setAdminError("Look up a user first.");
+      return;
+    }
+
+    await runAdminAction("account", async (token) => {
+      await setAdminUserAccountState({
+        reason: adminReason,
+        sessionToken: token,
+        state,
+        userId,
+      });
+    });
+  }
+
+  async function handleAdminAdjustment(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const userId = currentAdminUserId();
+    const amount = parseCashierAmount(adminAdjustmentInput);
+
+    if (!userId) {
+      setAdminError("Look up a user first.");
+      return;
+    }
+
+    if (!amount) {
+      setAdminError("Enter a whole number of sats to adjust.");
+      return;
+    }
+
+    await runAdminAction("adjustment", async (token) => {
+      await manualAdminBalanceAdjustment({
+        amount,
+        direction: adminAdjustmentDirection,
+        reason: adminReason,
+        requestId: newAdminRequestId(),
+        sessionToken: token,
+        userId,
+      });
     });
   }
 
@@ -1975,141 +2113,434 @@ export function App() {
               </button>
             </header>
 
-            {!adminMetrics ? (
-              <div className="cashier-empty">Loading metrics</div>
+            <div className="admin-tabs" role="tablist" aria-label="Admin sections">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={adminTab === "overview"}
+                className={adminTab === "overview" ? "active" : ""}
+                onClick={() => setAdminTab("overview")}
+              >
+                Overview
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={adminTab === "support"}
+                className={adminTab === "support" ? "active" : ""}
+                onClick={() => setAdminTab("support")}
+              >
+                Support
+              </button>
+            </div>
+
+            {adminError ? (
+              <div className="cashier-alert" role="alert">
+                {adminError}
+              </div>
+            ) : null}
+
+            {adminTab === "overview" ? (
+              !adminMetrics ? (
+                <div className="cashier-empty">Loading metrics</div>
+              ) : (
+                <>
+                  <div className="admin-meta-row">
+                    <span>Generated</span>
+                    <strong>{formatAdminDate(adminMetrics.generatedAt)}</strong>
+                  </div>
+
+                  <section className="admin-metric-grid" aria-label="Site totals">
+                    <article className="admin-metric">
+                      <span>Players</span>
+                      <strong>{formatNumber(adminMetrics.users.totalCount, 0)}</strong>
+                      <small>{formatNumber(adminMetrics.users.active24h, 0)} active 24h</small>
+                    </article>
+                    <article className="admin-metric">
+                      <span>Wallets</span>
+                      <strong>{formatNumber(adminMetrics.wallets.totalBalance, 0)}</strong>
+                      <small>{formatNumber(adminMetrics.wallets.heldBalance, 0)} held</small>
+                    </article>
+                    <article className="admin-metric">
+                      <span>Deposits</span>
+                      <strong>
+                        {formatNumber(adminMetrics.deposits.lifetime.completedAmount, 0)}
+                      </strong>
+                      <small>
+                        {formatNumber(adminMetrics.deposits.lifetime.pendingAmount, 0)} pending
+                      </small>
+                    </article>
+                    <article className="admin-metric">
+                      <span>Withdrawals</span>
+                      <strong>
+                        {formatNumber(adminMetrics.withdrawals.lifetime.completedAmount, 0)}
+                      </strong>
+                      <small>
+                        {formatNumber(adminMetrics.withdrawals.lifetime.pendingAmount, 0)} pending
+                      </small>
+                    </article>
+                    <article className="admin-metric">
+                      <span>Wagered</span>
+                      <strong>{formatNumber(adminMetrics.rounds.lifetime.wageredAmount, 0)}</strong>
+                      <small>
+                        {formatNumber(adminMetrics.rounds.last24h.wageredAmount, 0)} in 24h
+                      </small>
+                    </article>
+                    <article className="admin-metric">
+                      <span>Net</span>
+                      <strong>
+                        {formatNetAmount(adminMetrics.rounds.lifetime.netRevenueAmount)}
+                      </strong>
+                      <small>{formatPercent(adminMetrics.rounds.lifetime.holdPercent)} hold</small>
+                    </article>
+                  </section>
+
+                  <section className="admin-risk-grid" aria-label="Operational review">
+                    <div>
+                      <span>Pending deposits</span>
+                      <strong>{adminMetrics.deposits.lifetime.pendingCount}</strong>
+                    </div>
+                    <div>
+                      <span>Pending withdrawals</span>
+                      <strong>{adminMetrics.withdrawals.lifetime.pendingCount}</strong>
+                    </div>
+                    <div>
+                      <span>Settling rounds</span>
+                      <strong>{adminMetrics.rounds.lifetime.settlingCount}</strong>
+                    </div>
+                    <div>
+                      <span>Failed rounds</span>
+                      <strong>{adminMetrics.rounds.lifetime.failedCount}</strong>
+                    </div>
+                    <div>
+                      <span>Locked users</span>
+                      <strong>{adminMetrics.users.lockedCount}</strong>
+                    </div>
+                    <div>
+                      <span>Review users</span>
+                      <strong>{adminMetrics.users.pendingReviewCount}</strong>
+                    </div>
+                  </section>
+
+                  <section className="admin-risk-grid" aria-label="Work queue">
+                    <div>
+                      <span>Stuck deposits</span>
+                      <strong>{adminMetrics.workQueue.stuckDeposits.length}</strong>
+                    </div>
+                    <div>
+                      <span>Stuck withdrawals</span>
+                      <strong>{adminMetrics.workQueue.stuckWithdrawals.length}</strong>
+                    </div>
+                    <div>
+                      <span>Delayed rounds</span>
+                      <strong>{adminMetrics.workQueue.settlingRounds.length}</strong>
+                    </div>
+                    <div>
+                      <span>Failed rounds</span>
+                      <strong>{adminMetrics.workQueue.failedRounds.length}</strong>
+                    </div>
+                  </section>
+
+                  <section className="admin-section" aria-label="Recent rounds">
+                    <div className="label-row">
+                      <span className="control-label">Recent rounds</span>
+                      <span>Last {adminMetrics.recentRounds.length}</span>
+                    </div>
+                    <ol className="admin-list">
+                      {adminMetrics.recentRounds.length === 0 ? (
+                        <li className="cashier-empty">No rounds</li>
+                      ) : (
+                        adminMetrics.recentRounds.map((round) => (
+                          <li key={round.id} className={`admin-row ${round.status}`}>
+                            <div>
+                              <strong>{formatNumber(round.betAmount, 0)} bet</strong>
+                              <span>{formatAdminDate(round.createdAt)}</span>
+                            </div>
+                            <div>
+                              <strong>{formatNumber(round.payoutAmount, 0)} paid</strong>
+                              <span>
+                                {round.multiplier.toFixed(2)}x / {round.rows} / {round.risk}
+                              </span>
+                            </div>
+                            <span className={`cashier-status ${round.status}`}>{round.status}</span>
+                          </li>
+                        ))
+                      )}
+                    </ol>
+                  </section>
+
+                  <section className="admin-section" aria-label="Recent cashier activity">
+                    <div className="label-row">
+                      <span className="control-label">Recent cashier</span>
+                      <span>Last {adminMetrics.recentCashier.length}</span>
+                    </div>
+                    <ol className="admin-list">
+                      {adminMetrics.recentCashier.length === 0 ? (
+                        <li className="cashier-empty">No cashier activity</li>
+                      ) : (
+                        adminMetrics.recentCashier.map((entry) => (
+                          <li key={entry.id} className={`admin-row ${entry.status}`}>
+                            <div>
+                              <strong>{formatCashierType(entry.type)}</strong>
+                              <span>{formatAdminDate(entry.createdAt)}</span>
+                            </div>
+                            <div>
+                              <strong>{formatNumber(entry.amount, 0)}</strong>
+                              <span>{entry.userId}</span>
+                            </div>
+                            <span className={`cashier-status ${entry.status}`}>{entry.status}</span>
+                          </li>
+                        ))
+                      )}
+                    </ol>
+                  </section>
+                </>
+              )
             ) : (
-              <>
-                <div className="admin-meta-row">
-                  <span>Generated</span>
-                  <strong>{formatAdminDate(adminMetrics.generatedAt)}</strong>
-                </div>
+              <section className="admin-support" aria-label="Support tools">
+                <form className="admin-lookup-form" onSubmit={handleAdminLookup}>
+                  <label htmlFor="adminUserId">User ID</label>
+                  <input
+                    id="adminUserId"
+                    type="text"
+                    value={adminLookupUserId}
+                    onChange={(event) => setAdminLookupUserId(event.target.value)}
+                  />
+                  <label htmlFor="adminPublicId">Public ID</label>
+                  <input
+                    id="adminPublicId"
+                    type="text"
+                    value={adminLookupPublicId}
+                    onChange={(event) => setAdminLookupPublicId(event.target.value)}
+                  />
+                  <label htmlFor="adminDepositId">Deposit ID</label>
+                  <input
+                    id="adminDepositId"
+                    type="text"
+                    value={adminLookupDepositId}
+                    onChange={(event) => setAdminLookupDepositId(event.target.value)}
+                  />
+                  <label htmlFor="adminWithdrawalId">Withdrawal ID</label>
+                  <input
+                    id="adminWithdrawalId"
+                    type="text"
+                    value={adminLookupWithdrawalId}
+                    onChange={(event) => setAdminLookupWithdrawalId(event.target.value)}
+                  />
+                  <label htmlFor="adminRoundId">Round ID</label>
+                  <input
+                    id="adminRoundId"
+                    type="text"
+                    value={adminLookupRoundId}
+                    onChange={(event) => setAdminLookupRoundId(event.target.value)}
+                  />
+                  <button className="auth-secondary" type="submit">
+                    Search
+                  </button>
+                </form>
 
-                <section className="admin-metric-grid" aria-label="Site totals">
-                  <article className="admin-metric">
-                    <span>Players</span>
-                    <strong>{formatNumber(adminMetrics.users.totalCount, 0)}</strong>
-                    <small>{formatNumber(adminMetrics.users.active24h, 0)} active 24h</small>
-                  </article>
-                  <article className="admin-metric">
-                    <span>Wallets</span>
-                    <strong>{formatNumber(adminMetrics.wallets.totalBalance, 0)}</strong>
-                    <small>{formatNumber(adminMetrics.wallets.heldBalance, 0)} held</small>
-                  </article>
-                  <article className="admin-metric">
-                    <span>Deposits</span>
-                    <strong>
-                      {formatNumber(adminMetrics.deposits.lifetime.completedAmount, 0)}
-                    </strong>
-                    <small>
-                      {formatNumber(adminMetrics.deposits.lifetime.pendingAmount, 0)} pending
-                    </small>
-                  </article>
-                  <article className="admin-metric">
-                    <span>Withdrawals</span>
-                    <strong>
-                      {formatNumber(adminMetrics.withdrawals.lifetime.completedAmount, 0)}
-                    </strong>
-                    <small>
-                      {formatNumber(adminMetrics.withdrawals.lifetime.pendingAmount, 0)} pending
-                    </small>
-                  </article>
-                  <article className="admin-metric">
-                    <span>Wagered</span>
-                    <strong>{formatNumber(adminMetrics.rounds.lifetime.wageredAmount, 0)}</strong>
-                    <small>
-                      {formatNumber(adminMetrics.rounds.last24h.wageredAmount, 0)} in 24h
-                    </small>
-                  </article>
-                  <article className="admin-metric">
-                    <span>Net</span>
-                    <strong>
-                      {formatNetAmount(adminMetrics.rounds.lifetime.netRevenueAmount)}
-                    </strong>
-                    <small>{formatPercent(adminMetrics.rounds.lifetime.holdPercent)} hold</small>
-                  </article>
-                </section>
+                {!adminLookupRequest ? (
+                  <div className="cashier-empty">No lookup selected</div>
+                ) : !adminSupportLookup ? (
+                  <div className="cashier-empty">Loading lookup</div>
+                ) : !adminSupportLookup.found || !adminSupportLookup.user ? (
+                  <div className="cashier-empty">No matching user</div>
+                ) : (
+                  <>
+                    <div className="admin-user-summary">
+                      <div>
+                        <span>User</span>
+                        <strong>{adminSupportLookup.user.publicId}</strong>
+                        <small>{adminSupportLookup.user.id}</small>
+                      </div>
+                      <div>
+                        <span>Status</span>
+                        <strong>{adminSupportLookup.user.accountState}</strong>
+                        <small>{adminSupportLookup.user.role}</small>
+                      </div>
+                      <div>
+                        <span>Wallet</span>
+                        <strong>{formatNumber(adminSupportLookup.wallet.totalBalance, 0)}</strong>
+                        <small>
+                          {formatNumber(adminSupportLookup.wallet.availableBalance, 0)} available
+                        </small>
+                      </div>
+                    </div>
 
-                <section className="admin-risk-grid" aria-label="Operational review">
-                  <div>
-                    <span>Pending deposits</span>
-                    <strong>{adminMetrics.deposits.lifetime.pendingCount}</strong>
-                  </div>
-                  <div>
-                    <span>Pending withdrawals</span>
-                    <strong>{adminMetrics.withdrawals.lifetime.pendingCount}</strong>
-                  </div>
-                  <div>
-                    <span>Settling rounds</span>
-                    <strong>{adminMetrics.rounds.lifetime.settlingCount}</strong>
-                  </div>
-                  <div>
-                    <span>Failed rounds</span>
-                    <strong>{adminMetrics.rounds.lifetime.failedCount}</strong>
-                  </div>
-                  <div>
-                    <span>Locked users</span>
-                    <strong>{adminMetrics.users.lockedCount}</strong>
-                  </div>
-                  <div>
-                    <span>Review users</span>
-                    <strong>{adminMetrics.users.pendingReviewCount}</strong>
-                  </div>
-                </section>
+                    <div className="admin-action-panel">
+                      <label htmlFor="adminReason">Reason</label>
+                      <input
+                        id="adminReason"
+                        type="text"
+                        value={adminReason}
+                        onChange={(event) => setAdminReason(event.target.value)}
+                      />
+                      <div className="admin-action-buttons">
+                        <button
+                          type="button"
+                          disabled={adminBusy !== null}
+                          onClick={() => void handleAdminAccountState("active")}
+                        >
+                          Unlock
+                        </button>
+                        <button
+                          type="button"
+                          disabled={adminBusy !== null}
+                          onClick={() => void handleAdminAccountState("locked")}
+                        >
+                          Lock
+                        </button>
+                        <button
+                          type="button"
+                          disabled={adminBusy !== null}
+                          onClick={() => void handleAdminAccountState("pending_review")}
+                        >
+                          Review
+                        </button>
+                        <button
+                          type="button"
+                          disabled={adminBusy !== null}
+                          onClick={() => void handleAdminAccountState("disabled")}
+                        >
+                          Disable
+                        </button>
+                      </div>
+                      <form className="admin-adjustment-form" onSubmit={handleAdminAdjustment}>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={adminAdjustmentInput}
+                          onChange={(event) => setAdminAdjustmentInput(event.target.value)}
+                        />
+                        <select
+                          value={adminAdjustmentDirection}
+                          onChange={(event) =>
+                            setAdminAdjustmentDirection(event.target.value as "credit" | "debit")
+                          }
+                        >
+                          <option value="credit">Credit</option>
+                          <option value="debit">Debit</option>
+                        </select>
+                        <button type="submit" disabled={adminBusy !== null}>
+                          Adjust
+                        </button>
+                      </form>
+                    </div>
 
-                <section className="admin-section" aria-label="Recent rounds">
-                  <div className="label-row">
-                    <span className="control-label">Recent rounds</span>
-                    <span>Last {adminMetrics.recentRounds.length}</span>
-                  </div>
-                  <ol className="admin-list">
-                    {adminMetrics.recentRounds.length === 0 ? (
-                      <li className="cashier-empty">No rounds</li>
-                    ) : (
-                      adminMetrics.recentRounds.map((round) => (
-                        <li key={round.id} className={`admin-row ${round.status}`}>
-                          <div>
-                            <strong>{formatNumber(round.betAmount, 0)} bet</strong>
-                            <span>{formatAdminDate(round.createdAt)}</span>
-                          </div>
-                          <div>
-                            <strong>{formatNumber(round.payoutAmount, 0)} paid</strong>
-                            <span>
-                              {round.multiplier.toFixed(2)}x / {round.rows} / {round.risk}
-                            </span>
-                          </div>
-                          <span className={`cashier-status ${round.status}`}>{round.status}</span>
-                        </li>
-                      ))
-                    )}
-                  </ol>
-                </section>
+                    <div className="admin-support-grid">
+                      <section className="admin-section">
+                        <div className="label-row">
+                          <span className="control-label">Wallet events</span>
+                          <span>{adminSupportLookup.walletEvents.length}</span>
+                        </div>
+                        <ol className="admin-list">
+                          {adminSupportLookup.walletEvents.map((event) => (
+                            <li key={event.id} className="admin-row">
+                              <div>
+                                <strong>{event.kind}</strong>
+                                <span>{formatAdminDate(event.createdAt)}</span>
+                              </div>
+                              <div>
+                                <strong>{formatNetAmount(event.availableDelta)}</strong>
+                                <span>{formatNumber(event.availableBalanceAfter, 0)} after</span>
+                              </div>
+                            </li>
+                          ))}
+                        </ol>
+                      </section>
 
-                <section className="admin-section" aria-label="Recent cashier activity">
-                  <div className="label-row">
-                    <span className="control-label">Recent cashier</span>
-                    <span>Last {adminMetrics.recentCashier.length}</span>
-                  </div>
-                  <ol className="admin-list">
-                    {adminMetrics.recentCashier.length === 0 ? (
-                      <li className="cashier-empty">No cashier activity</li>
-                    ) : (
-                      adminMetrics.recentCashier.map((entry) => (
-                        <li key={entry.id} className={`admin-row ${entry.status}`}>
-                          <div>
-                            <strong>{formatCashierType(entry.type)}</strong>
-                            <span>{formatAdminDate(entry.createdAt)}</span>
-                          </div>
-                          <div>
-                            <strong>{formatNumber(entry.amount, 0)}</strong>
-                            <span>Sats</span>
-                          </div>
-                          <span className={`cashier-status ${entry.status}`}>{entry.status}</span>
-                        </li>
-                      ))
-                    )}
-                  </ol>
-                </section>
-              </>
+                      <section className="admin-section">
+                        <div className="label-row">
+                          <span className="control-label">Deposits</span>
+                          <span>{adminSupportLookup.deposits.length}</span>
+                        </div>
+                        <ol className="admin-list">
+                          {adminSupportLookup.deposits.map((deposit) => (
+                            <li key={deposit.id} className={`admin-row ${deposit.status}`}>
+                              <div>
+                                <strong>{formatNumber(deposit.amount, 0)}</strong>
+                                <span>{deposit.id}</span>
+                              </div>
+                              <div>
+                                <strong>{deposit.status}</strong>
+                                <span>
+                                  {deposit.lightningState ?? deposit.provider ?? "manual"}
+                                </span>
+                              </div>
+                            </li>
+                          ))}
+                        </ol>
+                      </section>
+
+                      <section className="admin-section">
+                        <div className="label-row">
+                          <span className="control-label">Withdrawals</span>
+                          <span>{adminSupportLookup.withdrawals.length}</span>
+                        </div>
+                        <ol className="admin-list">
+                          {adminSupportLookup.withdrawals.map((withdrawal) => (
+                            <li key={withdrawal.id} className={`admin-row ${withdrawal.status}`}>
+                              <div>
+                                <strong>{formatNumber(withdrawal.amount, 0)}</strong>
+                                <span>{withdrawal.id}</span>
+                              </div>
+                              <div>
+                                <strong>{withdrawal.status}</strong>
+                                <span>
+                                  {withdrawal.lightningState ?? withdrawal.provider ?? "manual"}
+                                </span>
+                              </div>
+                            </li>
+                          ))}
+                        </ol>
+                      </section>
+
+                      <section className="admin-section">
+                        <div className="label-row">
+                          <span className="control-label">Rounds</span>
+                          <span>{adminSupportLookup.rounds.length}</span>
+                        </div>
+                        <ol className="admin-list">
+                          {adminSupportLookup.rounds.map((round) => (
+                            <li key={round.id} className={`admin-row ${round.status}`}>
+                              <div>
+                                <strong>{formatNumber(round.betAmount, 0)} bet</strong>
+                                <span>{round.id}</span>
+                              </div>
+                              <div>
+                                <strong>{formatNumber(round.payoutAmount, 0)} paid</strong>
+                                <span>{round.status}</span>
+                              </div>
+                            </li>
+                          ))}
+                        </ol>
+                      </section>
+
+                      <section className="admin-section">
+                        <div className="label-row">
+                          <span className="control-label">Admin actions</span>
+                          <span>{adminSupportLookup.adminActions.length}</span>
+                        </div>
+                        <ol className="admin-list">
+                          {adminSupportLookup.adminActions.map((action) => (
+                            <li key={action.id} className="admin-row">
+                              <div>
+                                <strong>{action.action}</strong>
+                                <span>{formatAdminDate(action.createdAt)}</span>
+                              </div>
+                              <div>
+                                <strong>{action.reason}</strong>
+                                <span>{action.targetId}</span>
+                              </div>
+                            </li>
+                          ))}
+                        </ol>
+                      </section>
+                    </div>
+                  </>
+                )}
+              </section>
             )}
           </dialog>
         </div>

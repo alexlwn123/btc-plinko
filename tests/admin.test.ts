@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { summarizeSiteMetrics } from "../convex/admin";
+import type { Id } from "../convex/_generated/dataModel";
+import {
+  manualBalanceAdjustmentForAdmin,
+  setUserAccountStateForAdmin,
+  summarizeAdminWorkQueue,
+  summarizeSiteMetrics,
+} from "../convex/admin";
+import { INITIAL_PLAYABLE_BALANCE_SATS } from "../convex/walletCore";
+import { createDbMock, mutationCtx } from "./convexDbMock";
 
 type MetricsInput = Parameters<typeof summarizeSiteMetrics>[0];
 type UserInput = MetricsInput["users"][number];
@@ -164,5 +172,114 @@ describe("summarizeSiteMetrics", () => {
     expect(metrics.recentRounds).toHaveLength(12);
     expect(metrics.recentRounds[0]?.id).toBe("gameRounds:0");
     expect(metrics.recentRounds[11]?.id).toBe("gameRounds:11");
+  });
+});
+
+describe("summarizeAdminWorkQueue", () => {
+  it("finds failed rounds and stuck pending cashier records", () => {
+    const queues = summarizeAdminWorkQueue({
+      deposits: [
+        cashier("deposits:1", { createdAt: now - 20 * 60 * 1000, status: "pending" }),
+        cashier("deposits:2", { createdAt: now - 2 * 60 * 1000, status: "pending" }),
+      ],
+      now,
+      rounds: [
+        round("gameRounds:1", { createdAt: now - 10 * 60 * 1000, status: "settling" }),
+        round("gameRounds:2", { createdAt: now - 1 * 60 * 1000, status: "settling" }),
+        round("gameRounds:3", { status: "failed" }),
+      ],
+      withdrawals: [
+        cashier("withdrawals:1", {
+          createdAt: now - 30 * 60 * 1000,
+          status: "pending",
+        }),
+      ],
+    });
+
+    expect(queues.stuckDeposits.map((entry) => entry._id)).toEqual(["deposits:1"]);
+    expect(queues.stuckWithdrawals.map((entry) => entry._id)).toEqual(["withdrawals:1"]);
+    expect(queues.settlingRounds.map((entry) => entry._id)).toEqual(["gameRounds:1"]);
+    expect(queues.failedRounds.map((entry) => entry._id)).toEqual(["gameRounds:3"]);
+  });
+});
+
+describe("admin mutations", () => {
+  async function insertUser(
+    db: ReturnType<typeof createDbMock>,
+    overrides: Record<string, unknown> = {},
+  ) {
+    return (await db.ctx.db.insert("users", {
+      accountState: "active",
+      authMethod: "passkey",
+      createdAt: now,
+      lastSeenAt: now,
+      publicId: "anon-test",
+      role: "player",
+      ...overrides,
+    })) as Id<"users">;
+  }
+
+  it("changes user account state and logs the admin action", async () => {
+    const db = createDbMock();
+    const adminUserId = await insertUser(db, { publicId: "admin", role: "admin" });
+    const targetUserId = await insertUser(db, { publicId: "target" });
+
+    const updated = await setUserAccountStateForAdmin(mutationCtx(db), {
+      adminUserId,
+      reason: "support review",
+      state: "locked",
+      targetUserId,
+    });
+
+    expect(updated).toMatchObject({
+      accountState: "locked",
+      id: targetUserId,
+    });
+    expect(db.rows("adminActions")).toMatchObject([
+      {
+        action: "account_state_change",
+        adminUserId,
+        reason: "support review",
+        targetId: targetUserId,
+        targetType: "user",
+        targetUserId,
+      },
+    ]);
+  });
+
+  it("applies manual balance adjustments idempotently and logs the action", async () => {
+    const db = createDbMock();
+    const adminUserId = await insertUser(db, { publicId: "admin", role: "admin" });
+    const targetUserId = await insertUser(db, { publicId: "target" });
+
+    const first = await manualBalanceAdjustmentForAdmin(mutationCtx(db), {
+      adminUserId,
+      amount: 250,
+      direction: "credit",
+      reason: "support adjustment",
+      requestId: "adjust-1",
+      targetUserId,
+    });
+    const duplicate = await manualBalanceAdjustmentForAdmin(mutationCtx(db), {
+      adminUserId,
+      amount: 250,
+      direction: "credit",
+      reason: "support adjustment",
+      requestId: "adjust-1",
+      targetUserId,
+    });
+
+    expect(first.duplicate).toBe(false);
+    expect(duplicate.duplicate).toBe(true);
+    expect(db.rows("wallets")[0]).toMatchObject({
+      availableBalance: INITIAL_PLAYABLE_BALANCE_SATS + 250,
+      heldBalance: 0,
+    });
+    expect(
+      db.rows("walletEvents").filter((event) => event.kind === "manual_adjustment"),
+    ).toHaveLength(2);
+    expect(
+      db.rows("adminActions").filter((action) => action.action === "manual_balance_adjustment"),
+    ).toHaveLength(2);
   });
 });

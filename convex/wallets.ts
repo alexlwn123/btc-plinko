@@ -620,6 +620,61 @@ export const creditRefund = internalMutation({
   },
 });
 
+export async function adjustAvailableBalanceForUser(
+  ctx: MutationCtx,
+  {
+    adjustmentId,
+    amount,
+    direction,
+    idempotencyKey,
+    userId,
+  }: {
+    adjustmentId: string;
+    amount: number;
+    direction: "credit" | "debit";
+    idempotencyKey?: string;
+    userId: Id<"users">;
+  },
+) {
+  const kind = "manual_adjustment";
+  const key = idempotencyKey ?? idempotencyKeyFor("manual_adjustment", adjustmentId, kind);
+  const duplicate = await getDuplicateEvent(
+    ctx,
+    userId,
+    key,
+    "manual_adjustment",
+    adjustmentId,
+    kind,
+  );
+
+  if (duplicate) {
+    return {
+      duplicate: true,
+      eventId: duplicate._id,
+      wallet: serializeWallet(await getWalletByUser(ctx, userId)),
+    };
+  }
+
+  const availableDelta = direction === "credit" ? amount : -amount;
+  const wallet = await ensureWalletForUser(ctx, userId);
+  const result = await applyWalletEvent(ctx, wallet, {
+    amount,
+    availableDelta,
+    heldDelta: 0,
+    idempotencyKey: key,
+    kind,
+    sourceId: adjustmentId,
+    sourceType: "manual_adjustment",
+    status: "completed",
+  });
+
+  return {
+    duplicate: false,
+    eventId: result.eventId,
+    wallet: serializeWallet(result.wallet),
+  };
+}
+
 export const adjustAvailableBalance = internalMutation({
   args: {
     adjustmentId: v.string(),
@@ -629,42 +684,12 @@ export const adjustAvailableBalance = internalMutation({
     userId: v.id("users"),
   },
   handler: async (ctx, { adjustmentId, amount, direction, idempotencyKey, userId }) => {
-    const kind = "manual_adjustment";
-    const key = idempotencyKey ?? idempotencyKeyFor("manual_adjustment", adjustmentId, kind);
-    const duplicate = await getDuplicateEvent(
-      ctx,
-      userId,
-      key,
-      "manual_adjustment",
+    return await adjustAvailableBalanceForUser(ctx, {
       adjustmentId,
-      kind,
-    );
-
-    if (duplicate) {
-      return {
-        duplicate: true,
-        eventId: duplicate._id,
-        wallet: serializeWallet(await getWalletByUser(ctx, userId)),
-      };
-    }
-
-    const availableDelta = direction === "credit" ? amount : -amount;
-    const wallet = await ensureWalletForUser(ctx, userId);
-    const result = await applyWalletEvent(ctx, wallet, {
       amount,
-      availableDelta,
-      heldDelta: 0,
-      idempotencyKey: key,
-      kind,
-      sourceId: adjustmentId,
-      sourceType: "manual_adjustment",
-      status: "completed",
+      direction,
+      idempotencyKey,
+      userId,
     });
-
-    return {
-      duplicate: false,
-      eventId: result.eventId,
-      wallet: serializeWallet(result.wallet),
-    };
   },
 });
