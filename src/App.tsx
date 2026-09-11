@@ -440,11 +440,24 @@ function roundedRect(
   ctx.closePath();
 }
 
+function isEditableShortcutTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName);
+}
+
+function isSpaceDropKey(event: KeyboardEvent | React.KeyboardEvent) {
+  return event.code === "Space" || event.key === " " || event.key === "Spacebar";
+}
+
+function hasDropShortcutModifier(event: KeyboardEvent | React.KeyboardEvent) {
+  return event.altKey || event.ctrlKey || event.metaKey || event.shiftKey;
+}
+
 export function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const gameRef = useRef<GameState>(createInitialGameState());
   const pointerDropActiveRef = useRef(false);
-  const keyDropActiveRef = useRef(false);
+  const keyboardDropActiveRef = useRef(false);
   const lastDropActivationAtRef = useRef(0);
   const lastScrollYRef = useRef(0);
   const ensuredWalletSessionRef = useRef<string | null>(null);
@@ -1092,24 +1105,36 @@ export function App() {
     requestDropActivation();
   }
 
-  function handleDropKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
+  function requestKeyboardDrop(
+    event: KeyboardEvent | React.KeyboardEvent<HTMLButtonElement>,
+    options: { allowEnter?: boolean } = {},
+  ) {
+    const isEnterDropKey = options.allowEnter && event.key === "Enter";
+    const isDropKey = isEnterDropKey || isSpaceDropKey(event);
     if (
-      event.repeat ||
-      keyDropActiveRef.current ||
-      !["Enter", " "].includes(event.key) ||
-      view.isDropDisabled
+      event.defaultPrevented ||
+      hasDropShortcutModifier(event) ||
+      isEditableShortcutTarget(event.target) ||
+      !isDropKey ||
+      snapshot(gameRef.current).isDropDisabled
     ) {
       return;
     }
 
     event.preventDefault();
-    keyDropActiveRef.current = true;
+    if (event.repeat || keyboardDropActiveRef.current) return;
+
+    keyboardDropActiveRef.current = true;
     requestDropActivation();
   }
 
-  function handleDropKeyUp(event: React.KeyboardEvent<HTMLButtonElement>) {
-    if (["Enter", " "].includes(event.key)) {
-      keyDropActiveRef.current = false;
+  function handleDropKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
+    requestKeyboardDrop(event, { allowEnter: true });
+  }
+
+  function releaseKeyboardDrop(event: KeyboardEvent) {
+    if (isSpaceDropKey(event) || event.key === "Enter") {
+      keyboardDropActiveRef.current = false;
     }
   }
 
@@ -1437,6 +1462,29 @@ export function App() {
     }
   }, [canViewAdmin]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: global game shortcut reads mutable game state through refs.
+  useEffect(() => {
+    if (!isSignedIn) return;
+
+    function handleGlobalDropKeyDown(event: KeyboardEvent) {
+      requestKeyboardDrop(event);
+    }
+
+    function resetKeyboardDrop() {
+      keyboardDropActiveRef.current = false;
+    }
+
+    window.addEventListener("keydown", handleGlobalDropKeyDown);
+    window.addEventListener("keyup", releaseKeyboardDrop);
+    window.addEventListener("blur", resetKeyboardDrop);
+    return () => {
+      window.removeEventListener("keydown", handleGlobalDropKeyDown);
+      window.removeEventListener("keyup", releaseKeyboardDrop);
+      window.removeEventListener("blur", resetKeyboardDrop);
+      resetKeyboardDrop();
+    };
+  }, [isSignedIn]);
+
   useEffect(() => {
     if (!isSignedIn) {
       setIsControlSheetHidden(false);
@@ -1690,7 +1738,6 @@ export function App() {
                   disabled={view.isDropDisabled}
                   onPointerDown={handleDropPointerDown}
                   onKeyDown={handleDropKeyDown}
-                  onKeyUp={handleDropKeyUp}
                 >
                   {view.dropButtonLabel}
                 </button>
