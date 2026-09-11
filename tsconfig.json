@@ -17,6 +17,6 @@
     "jsx": "react-jsx",
     "types": ["vitest/globals"]
   },
-  "include": ["src", "tests", "convex", "vite.config.ts"],
+  "include": ["src", "tests", "convex", "server", "api", "vite.config.ts"],
   "references": []
 }

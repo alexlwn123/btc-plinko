@@ -1,0 +1,4 @@
+{
+  "rewrites": [{ "source": "/sandbox/:path*", "destination": "/index.html" }],
+  "functions": { "api/mdk.ts": { "maxDuration": 60 } }
+}

@@ -1,7 +1,7 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
   "files": {
-    "ignore": [".vercel", "dist", "node_modules", "convex/_generated"]
+    "ignore": [".vercel", "dist", "node_modules", "convex/_generated", "server/generated"]
   },
   "formatter": {
     "enabled": true,

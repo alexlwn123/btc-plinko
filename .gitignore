@@ -3,4 +3,6 @@ dist/
 .env
 .env.local
 .env.*.local
+.env*.sw?
 .vercel
+server/generated/

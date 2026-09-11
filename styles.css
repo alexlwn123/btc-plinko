@@ -1609,3 +1609,9 @@ input[type="range"] {
     border-radius: 8px 8px 0 0;
   }
 }
+:root .sandbox-entry-link {
+  color: #96c9df;
+  font-size: 13px;
+  text-align: center;
+  padding: 10px;
+}

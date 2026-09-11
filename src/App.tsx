@@ -1749,6 +1749,9 @@ export function App() {
                     {gameNotice}
                   </div>
                 ) : null}
+                <a href="/sandbox" className="sandbox-entry-link">
+                  Signet test checkout
+                </a>
               </div>
 
               <div className="history-panel" aria-label="Play history">
