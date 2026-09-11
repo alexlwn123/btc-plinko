@@ -50,12 +50,14 @@ function CheckoutSuccess() {
   return (
     <section className="signet-form">
       <h1>Signet payment</h1>
-      <p role="status">
-        {isCheckoutPaidLoading
-          ? "Checking payment status..."
-          : isCheckoutPaid
-            ? "Payment confirmed by Money Dev Kit."
-            : "Payment has not been confirmed."}
+      <p>
+        <output>
+          {isCheckoutPaidLoading
+            ? "Checking payment status..."
+            : isCheckoutPaid
+              ? "Payment confirmed by Money Dev Kit."
+              : "Payment has not been confirmed."}
+        </output>
       </p>
       <a href="/sandbox">New checkout</a>
     </section>
