@@ -506,10 +506,13 @@ export function App() {
   const syncLightningWithdrawal = useAction(api.lightning.syncWithdrawal);
   const settlePlinkoDrop = useMutation(api.plinko.settleDrop);
   const profile = useQuery(api.users.getSessionUser, sessionToken ? { sessionToken } : "skip");
-  const cashier = useQuery(api.cashier.getCashier, sessionToken ? { sessionToken } : "skip");
+  const cashier = useQuery(
+    api.cashier.getCashier,
+    sessionToken && profile ? { sessionToken } : "skip",
+  );
   const recentRounds = useQuery(
     api.plinko.getRecentRounds,
-    sessionToken ? { sessionToken } : "skip",
+    sessionToken && profile ? { sessionToken } : "skip",
   );
   const canViewAdmin = Boolean(sessionToken && profile?.role === "admin");
   const adminMetrics = useQuery(
