@@ -7,6 +7,7 @@ import { useAction, useMutation, useQuery } from "convex/react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
+import { type BallMotion, buildBallMotion, pegRadius, sampleBallMotion } from "./ballMotion";
 import {
   type Drop,
   type DropPoint,
@@ -74,11 +75,6 @@ type BoardState = {
   binTop: number;
 };
 
-type BoardPoint = {
-  x: number;
-  y: number;
-};
-
 type ActiveBall = {
   id: number;
   bet: number;
@@ -90,9 +86,7 @@ type ActiveBall = {
   roundId?: string;
   settlement: "local" | "server";
   startedAt: number;
-  duration: number;
-  points: BoardPoint[];
-  progress: number;
+  motion: BallMotion;
 };
 
 type PlayHistoryEntry = {
@@ -116,6 +110,7 @@ type GameState = {
   pendingServerBetTotal: number;
   lastPath: Array<"L" | "R">;
   lastSlot: number | null;
+  lastLandingAt: number;
   lastWin: number;
   lastMultiplier: number;
   dropCount: number;
@@ -187,10 +182,6 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function smoothstep(value: number) {
-  return value * value * (3 - 2 * value);
-}
-
 function parseRowsSetting(value: unknown) {
   const rows = Number(value);
 
@@ -243,6 +234,7 @@ function createInitialGameState(): GameState {
     pendingServerBetTotal: 0,
     lastPath: [],
     lastSlot: null,
+    lastLandingAt: 0,
     lastWin: 0,
     lastMultiplier: 0,
     dropCount: 0,
@@ -671,22 +663,6 @@ export function App() {
     state.board.binTop = topY + rowGap * state.rows + 16;
   }
 
-  function boardPoint(layer: number, rights: number) {
-    const { centerX, topY, rowGap, slotGap } = gameRef.current.board;
-    return {
-      x: centerX + (rights - layer / 2) * slotGap,
-      y: topY - rowGap * 0.62 + layer * rowGap,
-    };
-  }
-
-  function dropPathPoints(drop: Drop) {
-    const points = drop.points.map((point: DropPoint) => boardPoint(point.layer, point.rights));
-    const end = boardPoint(drop.rows, drop.slot);
-    end.y = gameRef.current.board.binTop - 18;
-    points.push(end);
-    return points;
-  }
-
   function dropFromSettledRound(round: SettledPlinkoRound): Drop {
     return {
       directions: [...round.directions],
@@ -711,7 +687,14 @@ export function App() {
     gameRef.current.board.width = rect.width;
     gameRef.current.board.height = rect.height;
     computeBoard();
-    draw(performance.now());
+    const now = performance.now();
+    for (const ball of gameRef.current.activeBalls) {
+      const previous = sampleBallMotion(ball.motion, now - ball.startedAt);
+      ball.motion = buildBallMotion(ball.drop, gameRef.current.board, ball.id);
+      const flight = ball.motion.flights[previous.flightIndex];
+      ball.startedAt = now - (flight.start + flight.duration * previous.flightProgress) * 1000;
+    }
+    draw(now);
   }
 
   function drawBackground(ctx: CanvasRenderingContext2D) {
@@ -735,30 +718,39 @@ export function App() {
   function drawPegs(ctx: CanvasRenderingContext2D, now: number) {
     const state = gameRef.current;
     const { topY, rowGap, slotGap, centerX } = state.board;
-    const activeLayers = new Set(state.activeBalls.map((ball) => Math.floor(ball.progress)));
+    const impacts = new Map<string, number>();
+    for (const ball of state.activeBalls) {
+      const elapsed = (now - ball.startedAt) / 1000;
+      for (const impact of ball.motion.impacts) {
+        const age = elapsed - impact.time;
+        if (age < 0 || age > 0.18) continue;
+        const key = `${impact.row}:${impact.peg}`;
+        impacts.set(key, Math.max(impacts.get(key) ?? 0, (1 - age / 0.18) ** 2));
+      }
+    }
 
     for (let row = 0; row < state.rows; row += 1) {
       for (let peg = 0; peg <= row; peg += 1) {
         const x = centerX + (peg - row / 2) * slotGap;
         const y = topY + row * rowGap;
-        const isActiveLayer = activeLayers.has(row);
-        const pulse = isActiveLayer ? 1 + Math.sin(now / 95) * 0.1 : 1;
-        const radius = clamp(slotGap * 0.09, 4.2, 7.2) * pulse;
+        const impact = impacts.get(`${row}:${peg}`) ?? 0;
+        const radius = pegRadius(state.board);
 
         ctx.beginPath();
-        ctx.arc(x, y, radius + 7, 0, Math.PI * 2);
-        ctx.fillStyle = isActiveLayer ? "rgba(0, 228, 141, 0.14)" : "rgba(255, 255, 255, 0.035)";
+        ctx.arc(x, y, radius * (2 + impact), 0, Math.PI * 2);
+        ctx.fillStyle =
+          impact > 0 ? `rgba(0, 228, 141, ${0.3 * impact})` : "rgba(255, 255, 255, 0.035)";
         ctx.fill();
 
         ctx.beginPath();
         ctx.arc(x, y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = isActiveLayer ? "#7dffd0" : "#eef5ff";
+        ctx.fillStyle = impact > 0.05 ? "#7dffd0" : "#eef5ff";
         ctx.fill();
       }
     }
   }
 
-  function drawBins(ctx: CanvasRenderingContext2D) {
+  function drawBins(ctx: CanvasRenderingContext2D, now: number) {
     const state = gameRef.current;
     const { centerX, slotGap, binTop, height } = state.board;
     const binHeight = Math.max(48, height - binTop - 22);
@@ -774,8 +766,14 @@ export function App() {
       const multiplier = state.multipliers[slot];
       const fill = multiplierColor(multiplier, slot, state.rows);
       const active = state.lastSlot === slot;
+      const landingAge = (now - state.lastLandingAt) / 1000;
+      const landing =
+        active && landingAge >= 0 && landingAge < 0.3
+          ? Math.sin((landingAge / 0.3) * Math.PI) * Math.exp(-landingAge * 8)
+          : 0;
+      const offset = landing * 7;
 
-      roundedRect(ctx, x - binWidth / 2, binTop, binWidth, binHeight, 7);
+      roundedRect(ctx, x - binWidth / 2, binTop + offset, binWidth, binHeight, 7);
       ctx.fillStyle = fill;
       ctx.globalAlpha = active ? 1 : 0.9;
       ctx.fill();
@@ -788,7 +786,7 @@ export function App() {
       }
 
       ctx.fillStyle = "#101319";
-      ctx.fillText(`${multiplier}x`, x, binTop + binHeight / 2);
+      ctx.fillText(`${multiplier}x`, x, binTop + offset + binHeight / 2);
     }
   }
 
@@ -810,26 +808,11 @@ export function App() {
     ctx.stroke();
   }
 
-  function currentBall(ball: ActiveBall, now: number) {
-    const elapsed = now - ball.startedAt;
-    const progress = clamp(elapsed / ball.duration, 0, 1);
-    const scaled = progress * (ball.points.length - 1);
-    const segment = Math.min(Math.floor(scaled), ball.points.length - 2);
-    const local = smoothstep(scaled - segment);
-    const from = ball.points[segment];
-    const to = ball.points[segment + 1];
-    const x = from.x + (to.x - from.x) * local;
-    const y = from.y + (to.y - from.y) * local - Math.sin(local * Math.PI) * 10;
-
-    ball.progress = scaled;
-
-    return { x, y, done: progress >= 1, ball };
-  }
-
-  function drawBall(ctx: CanvasRenderingContext2D, ball: { x: number; y: number } | null) {
-    if (!ball) return;
-
-    const radius = clamp(gameRef.current.board.slotGap * 0.16, 9, 15);
+  function drawBall(
+    ctx: CanvasRenderingContext2D,
+    ball: ReturnType<typeof sampleBallMotion>,
+    radius: number,
+  ) {
     const glow = ctx.createRadialGradient(
       ball.x,
       ball.y,
@@ -845,11 +828,13 @@ export function App() {
     ctx.arc(ball.x, ball.y, radius * 1.9, 0, Math.PI * 2);
     ctx.fill();
 
-    const shell = ctx.createLinearGradient(
-      ball.x - radius,
-      ball.y - radius,
-      ball.x + radius,
-      ball.y + radius,
+    const shell = ctx.createRadialGradient(
+      ball.x - radius * 0.35,
+      ball.y - radius * 0.4,
+      radius * 0.05,
+      ball.x,
+      ball.y,
+      radius,
     );
     shell.addColorStop(0, "#eafff7");
     shell.addColorStop(0.35, "#00e48d");
@@ -860,8 +845,21 @@ export function App() {
     ctx.fill();
 
     ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = Math.max(0.5, radius * 0.1);
     ctx.stroke();
+
+    // A faint rotating surface mark gives the small sphere visible spin while
+    // the main highlight stays fixed to the light source.
+    ctx.beginPath();
+    ctx.arc(
+      ball.x + Math.cos(ball.angle) * radius * 0.5,
+      ball.y + Math.sin(ball.angle) * radius * 0.5,
+      radius * 0.14,
+      0,
+      Math.PI * 2,
+    );
+    ctx.fillStyle = "rgba(0, 70, 46, 0.35)";
+    ctx.fill();
   }
 
   function draw(now = performance.now()) {
@@ -874,12 +872,12 @@ export function App() {
     drawBackground(ctx);
     drawRails(ctx);
     drawPegs(ctx, now);
-    drawBins(ctx);
+    drawBins(ctx, now);
 
     const finished: ActiveBall[] = [];
     for (const activeBall of gameRef.current.activeBalls) {
-      const ball = currentBall(activeBall, now);
-      drawBall(ctx, ball);
+      const ball = sampleBallMotion(activeBall.motion, now - activeBall.startedAt);
+      drawBall(ctx, ball, activeBall.motion.radius);
 
       if (ball.done) {
         finished.push(activeBall);
@@ -887,7 +885,7 @@ export function App() {
     }
 
     if (finished.length > 0) {
-      finishDrops(finished);
+      finishDrops(finished, now);
     }
   }
 
@@ -898,13 +896,13 @@ export function App() {
     state.animationFrame = requestAnimationFrame((now) => {
       state.animationFrame = null;
       draw(now);
-      if (state.activeBalls.length > 0) {
+      if (state.activeBalls.length > 0 || now - state.lastLandingAt < 320) {
         scheduleAnimation();
       }
     });
   }
 
-  function finishDrops(finishedBalls: ActiveBall[]) {
+  function finishDrops(finishedBalls: ActiveBall[], now: number) {
     const state = gameRef.current;
     const finishedIds = new Set(finishedBalls.map((ball) => ball.id));
     state.activeBalls = state.activeBalls.filter((ball) => !finishedIds.has(ball.id));
@@ -920,6 +918,7 @@ export function App() {
       state.lastMultiplier = ball.multiplier;
       state.lastPath = [...ball.drop.directions];
       state.lastSlot = ball.drop.slot;
+      state.lastLandingAt = now;
       state.dropCount += 1;
       state.fairness.lastProof = {
         serverSeed: ball.commit.serverSeed,
@@ -987,12 +986,10 @@ export function App() {
             serverSeedHash: round.serverSeedHash,
           },
           drop,
-          duration: 580 + round.rows * 165,
           id: state.nextBallId,
           multiplier: round.multiplier,
           payoutAmount: round.payoutAmount,
-          points: dropPathPoints(drop),
-          progress: 0,
+          motion: buildBallMotion(drop, state.board, state.nextBallId),
           roundId: round.id,
           settlement: "server",
           startedAt: performance.now(),
@@ -1039,12 +1036,10 @@ export function App() {
         clientSeed,
         commit,
         drop,
-        duration: 580 + rows * 165,
         id: state.nextBallId,
         multiplier: multipliers[drop.slot],
         payoutAmount: Math.floor(bet * multipliers[drop.slot]),
-        points: dropPathPoints(drop),
-        progress: 0,
+        motion: buildBallMotion(drop, state.board, state.nextBallId),
         settlement: "local",
         startedAt: performance.now(),
       });
