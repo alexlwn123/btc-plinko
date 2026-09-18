@@ -826,20 +826,6 @@ export function App() {
     return { x, y, done: progress >= 1, ball };
   }
 
-  function drawPathPreview(ctx: CanvasRenderingContext2D) {
-    ctx.strokeStyle = "rgba(0, 228, 141, 0.18)";
-    ctx.lineWidth = 3;
-
-    for (const ball of gameRef.current.activeBalls.slice(-12)) {
-      ctx.beginPath();
-      ball.points.forEach((point, index) => {
-        if (index === 0) ctx.moveTo(point.x, point.y);
-        else ctx.lineTo(point.x, point.y);
-      });
-      ctx.stroke();
-    }
-  }
-
   function drawBall(ctx: CanvasRenderingContext2D, ball: { x: number; y: number } | null) {
     if (!ball) return;
 
@@ -889,7 +875,6 @@ export function App() {
     drawRails(ctx);
     drawPegs(ctx, now);
     drawBins(ctx);
-    drawPathPreview(ctx);
 
     const finished: ActiveBall[] = [];
     for (const activeBall of gameRef.current.activeBalls) {
