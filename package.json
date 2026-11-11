@@ -17,12 +17,13 @@
   "dependencies": {
     "@moneydevkit/core": "0.22.0",
     "@simplewebauthn/browser": "^13.3.0",
-    "@simplewebauthn/server": "^13.3.0",
+    "@simplewebauthn/server": "^13.3.3",
     "@vercel/analytics": "^2.0.1",
     "convex": "^1.24.8",
     "lucide-react": "^1.45.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "sharp": "0.35.5"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
@@ -32,7 +33,13 @@
     "@vitejs/plugin-react": "^4.5.0",
     "esbuild": "^0.25.12",
     "typescript": "^5.8.3",
-    "vite": "^6.3.5",
-    "vitest": "^3.1.4"
+    "vite": "^6.4.6",
+    "vitest": "^4.1.12"
+  },
+  "pnpm": {
+    "overrides": {
+      "ws@>=8.0.0 <8.21.0": "^8.21.0",
+      "@liquid-js/qr-code-styling": "5.5.0"
+    }
   }
 }
